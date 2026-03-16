@@ -1,0 +1,28 @@
+# KAR (Knowledge-Augmented Recommendation) default configuration
+# Matches KARConfig NamedTuple defaults in src/config.py
+
+expert:
+  d_enc: 768        # BGE input dimension
+  d_hidden: 256     # MLP hidden dimension
+  d_rec: 64         # Expert output dimension
+  n_layers: 2
+  dropout_rate: 0.1
+
+gating:
+  variant: g2       # g1: fixed, g2: expert-conditioned (default), g3: context, g4: cross
+  d_context: 0      # G3 only: user demographic context dimension
+
+fusion:
+  variant: f2       # f1: concat, f2: addition (default), f3: gated, f4: cross-attention
+  alpha_init: 0.1   # F2 only: initial scaling factor
+  n_heads: 4        # F4 only: cross-attention heads
+
+layer_combo: "L1+L2+L3"  # Attribute layer combination for factual text
+align_weight: 0.1         # Alignment loss weight
+diversity_weight: 0.01    # Diversity loss weight
+
+# Multi-stage training schedule
+stage1_epochs: 2          # Backbone pre-train (BCE only)
+stage2_epochs: 5          # Expert adaptor (align+div, backbone frozen)
+stage3_epochs: 3          # End-to-end (BCE+align+div)
+stage3_lr_factor: 0.1     # LR multiplier for stage 3

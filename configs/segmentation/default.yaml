@@ -1,0 +1,13 @@
+customer_k_range: [4, 6, 8, 10, 12, 15]
+customer_method: "kmeans"
+pca_variance_threshold: 0.95
+umap_n_components: 2
+umap_n_neighbors: 15
+umap_min_dist: 0.1
+umap_cluster_n_components: 5
+hdbscan_min_cluster_size: 500
+hdbscan_min_samples: 50
+product_k_range: [10, 15, 20, 25, 30]
+product_method: "kmeans"
+subsample_size: 50000
+random_seed: 42

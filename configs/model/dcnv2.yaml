@@ -1,0 +1,7 @@
+d_embed: 16
+n_cross_layers: 3
+n_experts: 4
+d_low_rank: 64
+dnn_hidden_dims: [256, 128, 64]
+dropout_rate: 0.1
+use_batch_norm: true

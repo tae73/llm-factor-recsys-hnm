@@ -1,0 +1,5 @@
+d_embed: 64
+n_heads: 2
+n_blocks: 2
+max_seq_len: 50
+dropout_rate: 0.2

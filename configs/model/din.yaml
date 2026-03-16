@@ -1,0 +1,5 @@
+d_embed: 16
+attention_hidden_dims: [64, 32]
+dnn_hidden_dims: [256, 128, 64]
+dropout_rate: 0.1
+use_batch_norm: true

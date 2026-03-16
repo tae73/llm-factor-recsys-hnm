@@ -1,0 +1,9 @@
+defaults:
+  - data: hm
+  - split: temporal
+  - filter: active5
+  - baseline: als
+  - evaluation: default
+  - extract: default
+  - reasoning: default
+  - embedding: default

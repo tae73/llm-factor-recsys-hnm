@@ -1,0 +1,59 @@
+# Data
+data/
+!data/.gitkeep
+*.parquet
+*.npz
+*.bz2
+*.tar
+
+# Results (models, predictions are large)
+results/models/
+results/predictions/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.env.local
+
+# DVC
+/dvc.lock
+
+# W&B
+wandb/
+
+# Ray
+ray_results/
+
+# Local-only files
+CLAUDE.md
+PLAN.md
+.claude/
+tmp/
+elice-cloud-*.pem

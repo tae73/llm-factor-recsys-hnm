@@ -1,0 +1,4 @@
+neg_sample_ratio: 4
+reference_date: "2020-06-30"
+random_seed: 42
+chunk_size: 100000

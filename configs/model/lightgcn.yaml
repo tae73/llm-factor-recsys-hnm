@@ -1,0 +1,4 @@
+d_embed: 64
+n_layers: 3
+dropout_rate: 0.0
+l2_reg: 0.0001

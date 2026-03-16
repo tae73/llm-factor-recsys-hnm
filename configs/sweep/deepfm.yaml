@@ -1,0 +1,26 @@
+program: scripts/train.py
+method: bayes
+metric:
+  name: val/map_at_12
+  goal: maximize
+parameters:
+  d_embed:
+    values: [8, 16, 32, 64]
+  learning_rate:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.01
+  dropout_rate:
+    values: [0.0, 0.1, 0.2, 0.3]
+  batch_size:
+    values: [1024, 2048, 4096]
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --backbone=deepfm
+  - --features-dir=data/features
+  - --data-dir=data/processed
+  - --model-dir=results/models
+  - --predictions-dir=results/predictions
+  - ${args}

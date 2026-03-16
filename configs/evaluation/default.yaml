@@ -1,0 +1,6 @@
+k: 12
+metrics:
+  - map
+  - hr
+  - ndcg
+  - mrr

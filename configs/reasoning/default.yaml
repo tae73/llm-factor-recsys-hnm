@@ -1,0 +1,14 @@
+model: gpt-4.1-nano
+use_batch_api: false
+max_concurrent: 5
+checkpoint_interval: 500
+max_cost_usd: 50.0
+max_retries: 6
+timeout_seconds: 30.0
+tpm_limit: 200000
+batch_max_bytes: 150000000
+batch_max_requests: 500
+pilot_size: 200
+min_purchases: 5
+recent_items_limit: 20
+l1_time_weight_halflife_days: 90
