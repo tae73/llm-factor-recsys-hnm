@@ -1,311 +1,193 @@
-"""Grain-based data loader for recommendation model training.
+"""Vectorized numpy batch iterator for recommendation model training.
 
-Replaces numpy BatchIterator with grain.python DataLoader for:
-- Multiprocess prefetch (worker_count > 0)
+Replaces Grain DataLoader with NumpyBatchIterator:
+- Vectorized numpy fancy indexing (arr[batch_indices]) instead of per-sample __getitem__
+- No multiprocess workers — numpy fancy indexing is fast enough (~<1ms/batch)
 - Deterministic shuffling (same seed → same batch order)
-- Multi-device sharding (ShardByJaxProcess, no-op on single device)
+- Eliminates Grain fork() + JAX GPU context deadlock
 
-Data flow (feature-based: DeepFM, DCNv2):
-    TrainPairsSource[idx] → {user_idx, item_idx, label}
-        → FeatureLookupTransform → {user_cat, user_num, item_cat, item_num, labels}
-            → grain.Batch → batched dict[str, np.ndarray]
-
-Data flow (graph-based: LightGCN):
-    TrainPairsSource[idx] → {user_idx, item_idx, label}
-        → IndexOnlyTransform → {user_idx, item_idx, labels}
-            → grain.Batch → batched dict[str, np.ndarray]
-
-Data flow (DIN):
-    TrainPairsSource[idx] → {user_idx, item_idx, label}
-        → DINLookupTransform → {user_cat, user_num, item_cat, item_num, history, hist_len, labels}
-            → grain.Batch → batched dict[str, np.ndarray]
-
-Data flow (SASRec):
-    TrainPairsSource[idx] → {user_idx, item_idx, label}
-        → SASRecTransform → {history, hist_len, target_item_seq_idx, labels}
-            → grain.Batch → batched dict[str, np.ndarray]
+Data flow (all backbones):
+    NumpyBatchIterator.__iter__():
+        perm = rng.permutation(N)
+        for batch_indices in chunks(perm, batch_size):
+            u, i = user_idx[batch_indices], item_idx[batch_indices]
+            yield batch_fn(u, i, labels[batch_indices])
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
-import grain.python as grain
 import numpy as np
 
 from src.features.store import load_item_features, load_train_pairs, load_user_features
 
 
 # ---------------------------------------------------------------------------
-# Data Source
+# NumpyBatchIterator
 # ---------------------------------------------------------------------------
 
 
-class TrainPairsSource:
-    """RandomAccessDataSource of (user_idx, item_idx, label) triples.
+class NumpyBatchIterator:
+    """Vectorized batch iterator using numpy fancy indexing.
 
-    Stores only indices and labels — feature arrays are referenced
-    by FeatureLookupTransform. Minimizes pickling cost when grain
-    workers fork.
+    Each iteration yields a dict[str, np.ndarray] with the same structure
+    as the former Grain pipeline, so trainer.py requires no changes.
     """
 
-    def __init__(self, features_dir: Path) -> None:
-        pairs = load_train_pairs(features_dir)
-        self._user_idx: np.ndarray = pairs["user_idx"]  # (N,) int32
-        self._item_idx: np.ndarray = pairs["item_idx"]  # (N,) int32
-        self._labels: np.ndarray = pairs["labels"]  # (N,) float32
-        self._len = len(self._labels)
+    def __init__(
+        self,
+        user_idx: np.ndarray,
+        item_idx: np.ndarray,
+        labels: np.ndarray,
+        batch_fn: Callable[[np.ndarray, np.ndarray, np.ndarray], dict[str, np.ndarray]],
+        batch_size: int,
+        shuffle: bool = True,
+        seed: int = 42,
+        drop_remainder: bool = True,
+    ) -> None:
+        self._user_idx = user_idx
+        self._item_idx = item_idx
+        self._labels = labels
+        self._batch_fn = batch_fn
+        self._batch_size = batch_size
+        self._shuffle = shuffle
+        self._seed = seed
+        self._drop_remainder = drop_remainder
+        self._n = len(labels)
 
     def __len__(self) -> int:
-        return self._len
+        if self._drop_remainder:
+            return self._n // self._batch_size
+        return (self._n + self._batch_size - 1) // self._batch_size
 
-    def __getitem__(self, idx: int) -> dict[str, int | float]:
-        return {
-            "user_idx": int(self._user_idx[idx]),
-            "item_idx": int(self._item_idx[idx]),
-            "label": float(self._labels[idx]),
-        }
+    def __iter__(self) -> Iterator[dict[str, np.ndarray]]:
+        rng = np.random.RandomState(self._seed)
+        indices = rng.permutation(self._n) if self._shuffle else np.arange(self._n)
 
-
-# ---------------------------------------------------------------------------
-# Feature Lookup Transform (DeepFM, DCNv2)
-# ---------------------------------------------------------------------------
-
-
-class FeatureLookupTransform(grain.MapTransform):
-    """Index → feature numpy array lookup.
-
-    Runs in worker processes. macOS/Linux fork() CoW shares
-    the underlying feature arrays without duplication.
-    """
-
-    def __init__(
-        self,
-        user_features: dict[str, np.ndarray],
-        item_features: dict[str, np.ndarray],
-    ) -> None:
-        self._user_num = user_features["numerical"]  # (n_users, 8)
-        self._user_cat = user_features["categorical"]  # (n_users, 3)
-        self._item_num = item_features["numerical"]  # (n_items, 2)
-        self._item_cat = item_features["categorical"]  # (n_items, 5)
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "user_cat": self._user_cat[u],
-            "user_num": self._user_num[u],
-            "item_cat": self._item_cat[i],
-            "item_num": self._item_num[i],
-            "labels": np.float32(element["label"]),
-        }
+        for start in range(0, self._n, self._batch_size):
+            end = start + self._batch_size
+            if end > self._n and self._drop_remainder:
+                break
+            idx = indices[start:end]
+            u = self._user_idx[idx]
+            i = self._item_idx[idx]
+            lab = self._labels[idx]
+            yield self._batch_fn(u, i, lab)
 
 
 # ---------------------------------------------------------------------------
-# Index-Only Transform (LightGCN)
+# Batch function builders (replace Grain transforms)
 # ---------------------------------------------------------------------------
 
 
-class IndexOnlyTransform(grain.MapTransform):
-    """LightGCN: no feature lookup, just pass indices + label."""
+def _make_feature_batch_fn(
+    user_cat: np.ndarray,
+    user_num: np.ndarray,
+    item_cat: np.ndarray,
+    item_num: np.ndarray,
+    item_emb: np.ndarray | None = None,
+    user_emb: np.ndarray | None = None,
+) -> Callable[..., dict[str, Any]]:
+    """Feature-based backbones (DeepFM, DCNv2), optionally with KAR."""
 
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        return {
-            "user_idx": np.int32(element["user_idx"]),
-            "item_idx": np.int32(element["item_idx"]),
-            "labels": np.float32(element["label"]),
+    def batch_fn(
+        u: np.ndarray, i: np.ndarray, labels: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        result: dict[str, np.ndarray] = {
+            "user_cat": user_cat[u],
+            "user_num": user_num[u],
+            "item_cat": item_cat[i],
+            "item_num": item_num[i],
+            "labels": labels,
         }
+        if item_emb is not None:
+            result["h_fact"] = item_emb[i]
+            result["h_reason"] = user_emb[u]  # type: ignore[index]
+        return result
+
+    return batch_fn
 
 
-# ---------------------------------------------------------------------------
-# Sequential Transforms (DIN, SASRec)
-# ---------------------------------------------------------------------------
+def _make_index_batch_fn(
+    item_emb: np.ndarray | None = None,
+    user_emb: np.ndarray | None = None,
+) -> Callable[..., dict[str, Any]]:
+    """Graph-based backbone (LightGCN), optionally with KAR."""
 
-
-class DINLookupTransform(grain.MapTransform):
-    """Feature lookup + sequence for DIN.
-
-    Combines static user/item features with purchase history sequence.
-    """
-
-    def __init__(
-        self,
-        user_features: dict[str, np.ndarray],
-        item_features: dict[str, np.ndarray],
-        sequences: np.ndarray,
-        seq_lengths: np.ndarray,
-    ) -> None:
-        self._user_num = user_features["numerical"]
-        self._user_cat = user_features["categorical"]
-        self._item_num = item_features["numerical"]
-        self._item_cat = item_features["categorical"]
-        self._sequences = sequences    # (n_users, max_seq_len) int32
-        self._seq_lengths = seq_lengths  # (n_users,) int32
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "user_cat": self._user_cat[u],
-            "user_num": self._user_num[u],
-            "item_cat": self._item_cat[i],
-            "item_num": self._item_num[i],
-            "history": self._sequences[u],
-            "hist_len": self._seq_lengths[u],
-            "labels": np.float32(element["label"]),
+    def batch_fn(
+        u: np.ndarray, i: np.ndarray, labels: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        result: dict[str, np.ndarray] = {
+            "user_idx": u.astype(np.int32),
+            "item_idx": i.astype(np.int32),
+            "labels": labels,
         }
+        if item_emb is not None:
+            result["h_fact"] = item_emb[i]
+            result["h_reason"] = user_emb[u]  # type: ignore[index]
+        return result
+
+    return batch_fn
 
 
-class SASRecTransform(grain.MapTransform):
-    """Sequence-only lookup for SASRec.
+def _make_din_batch_fn(
+    user_cat: np.ndarray,
+    user_num: np.ndarray,
+    item_cat: np.ndarray,
+    item_num: np.ndarray,
+    sequences: np.ndarray,
+    seq_lengths: np.ndarray,
+    item_emb: np.ndarray | None = None,
+    user_emb: np.ndarray | None = None,
+) -> Callable[..., dict[str, Any]]:
+    """DIN backbone, optionally with KAR."""
 
-    Returns history, hist_len, target item sequence index, and label.
-    """
-
-    def __init__(
-        self,
-        sequences: np.ndarray,
-        seq_lengths: np.ndarray,
-    ) -> None:
-        self._sequences = sequences
-        self._seq_lengths = seq_lengths
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "history": self._sequences[u],
-            "hist_len": self._seq_lengths[u],
-            "target_item_seq_idx": np.int32(i + 1),  # +1 for PAD offset
-            "labels": np.float32(element["label"]),
+    def batch_fn(
+        u: np.ndarray, i: np.ndarray, labels: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        result: dict[str, np.ndarray] = {
+            "user_cat": user_cat[u],
+            "user_num": user_num[u],
+            "item_cat": item_cat[i],
+            "item_num": item_num[i],
+            "history": sequences[u],
+            "hist_len": seq_lengths[u],
+            "labels": labels,
         }
+        if item_emb is not None:
+            result["h_fact"] = item_emb[i]
+            result["h_reason"] = user_emb[u]  # type: ignore[index]
+        return result
+
+    return batch_fn
 
 
-# ---------------------------------------------------------------------------
-# KAR Transforms (adds BGE embeddings to existing transforms)
-# ---------------------------------------------------------------------------
+def _make_sasrec_batch_fn(
+    sequences: np.ndarray,
+    seq_lengths: np.ndarray,
+    item_emb: np.ndarray | None = None,
+    user_emb: np.ndarray | None = None,
+) -> Callable[..., dict[str, Any]]:
+    """SASRec backbone, optionally with KAR."""
 
-
-class KARFeatureLookupTransform(grain.MapTransform):
-    """Feature lookup + BGE embedding lookup for KAR with feature-based backbones.
-
-    Extends FeatureLookupTransform with h_fact (item BGE) and h_reason (user BGE).
-    """
-
-    def __init__(
-        self,
-        user_features: dict[str, np.ndarray],
-        item_features: dict[str, np.ndarray],
-        item_embeddings: np.ndarray,
-        user_embeddings: np.ndarray,
-    ) -> None:
-        self._user_num = user_features["numerical"]
-        self._user_cat = user_features["categorical"]
-        self._item_num = item_features["numerical"]
-        self._item_cat = item_features["categorical"]
-        self._item_emb = item_embeddings  # (n_items, 768) float32
-        self._user_emb = user_embeddings  # (n_users, 768) float32
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "user_cat": self._user_cat[u],
-            "user_num": self._user_num[u],
-            "item_cat": self._item_cat[i],
-            "item_num": self._item_num[i],
-            "h_fact": self._item_emb[i],
-            "h_reason": self._user_emb[u],
-            "labels": np.float32(element["label"]),
+    def batch_fn(
+        u: np.ndarray, i: np.ndarray, labels: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        result: dict[str, np.ndarray] = {
+            "history": sequences[u],
+            "hist_len": seq_lengths[u],
+            "target_item_seq_idx": (i + 1).astype(np.int32),
+            "labels": labels,
         }
+        if item_emb is not None:
+            result["h_fact"] = item_emb[i]
+            result["h_reason"] = user_emb[u]  # type: ignore[index]
+        return result
 
-
-class KARIndexTransform(grain.MapTransform):
-    """Index + BGE embedding lookup for KAR with LightGCN."""
-
-    def __init__(
-        self,
-        item_embeddings: np.ndarray,
-        user_embeddings: np.ndarray,
-    ) -> None:
-        self._item_emb = item_embeddings
-        self._user_emb = user_embeddings
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "user_idx": np.int32(u),
-            "item_idx": np.int32(i),
-            "h_fact": self._item_emb[i],
-            "h_reason": self._user_emb[u],
-            "labels": np.float32(element["label"]),
-        }
-
-
-class KARDINLookupTransform(grain.MapTransform):
-    """DIN features + sequences + BGE embeddings for KAR."""
-
-    def __init__(
-        self,
-        user_features: dict[str, np.ndarray],
-        item_features: dict[str, np.ndarray],
-        sequences: np.ndarray,
-        seq_lengths: np.ndarray,
-        item_embeddings: np.ndarray,
-        user_embeddings: np.ndarray,
-    ) -> None:
-        self._user_num = user_features["numerical"]
-        self._user_cat = user_features["categorical"]
-        self._item_num = item_features["numerical"]
-        self._item_cat = item_features["categorical"]
-        self._sequences = sequences
-        self._seq_lengths = seq_lengths
-        self._item_emb = item_embeddings
-        self._user_emb = user_embeddings
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "user_cat": self._user_cat[u],
-            "user_num": self._user_num[u],
-            "item_cat": self._item_cat[i],
-            "item_num": self._item_num[i],
-            "history": self._sequences[u],
-            "hist_len": self._seq_lengths[u],
-            "h_fact": self._item_emb[i],
-            "h_reason": self._user_emb[u],
-            "labels": np.float32(element["label"]),
-        }
-
-
-class KARSASRecTransform(grain.MapTransform):
-    """SASRec sequences + BGE embeddings for KAR."""
-
-    def __init__(
-        self,
-        sequences: np.ndarray,
-        seq_lengths: np.ndarray,
-        item_embeddings: np.ndarray,
-        user_embeddings: np.ndarray,
-    ) -> None:
-        self._sequences = sequences
-        self._seq_lengths = seq_lengths
-        self._item_emb = item_embeddings
-        self._user_emb = user_embeddings
-
-    def map(self, element: dict) -> dict[str, np.ndarray]:
-        u = element["user_idx"]
-        i = element["item_idx"]
-        return {
-            "history": self._sequences[u],
-            "hist_len": self._seq_lengths[u],
-            "target_item_seq_idx": np.int32(i + 1),
-            "h_fact": self._item_emb[i],
-            "h_reason": self._user_emb[u],
-            "labels": np.float32(element["label"]),
-        }
+    return batch_fn
 
 
 # ---------------------------------------------------------------------------
@@ -317,15 +199,15 @@ def create_train_loader(
     features_dir: Path,
     batch_size: int,
     seed: int,
-    worker_count: int = 4,
+    worker_count: int = 0,
     prefetch_buffer_size: int = 2,
     shuffle: bool = True,
     backbone_name: str = "deepfm",
     use_kar: bool = False,
     item_embeddings: np.ndarray | None = None,
     user_embeddings: np.ndarray | None = None,
-) -> grain.DataLoader:
-    """Create a Grain DataLoader for training.
+) -> NumpyBatchIterator:
+    """Create a NumpyBatchIterator for training.
 
     Each epoch should create a new loader with seed=base_seed+epoch
     for different shuffle order per epoch.
@@ -334,36 +216,37 @@ def create_train_loader(
         features_dir: Path to feature .npz files.
         batch_size: Samples per batch.
         seed: Random seed for deterministic shuffling.
-        worker_count: Multiprocess workers (0 = same process).
-        prefetch_buffer_size: Batches to prefetch per worker.
+        worker_count: Ignored (kept for backward compatibility).
+        prefetch_buffer_size: Ignored (kept for backward compatibility).
         shuffle: Whether to shuffle indices.
-        backbone_name: Backbone name to determine transform type.
+        backbone_name: Backbone name to determine batch structure.
         use_kar: If True, include h_fact/h_reason BGE embeddings in batch.
         item_embeddings: (n_items, 768) aligned item BGE embeddings (required if use_kar).
         user_embeddings: (n_users, 768) aligned user BGE embeddings (required if use_kar).
 
     Returns:
-        grain.DataLoader yielding batched dicts.
+        NumpyBatchIterator yielding batched dicts.
     """
-    source = TrainPairsSource(features_dir)
+    pairs = load_train_pairs(features_dir)
+    user_idx = pairs["user_idx"]
+    item_idx = pairs["item_idx"]
+    labels = pairs["labels"]
 
     if use_kar:
         assert item_embeddings is not None and user_embeddings is not None, (
             "item_embeddings and user_embeddings required when use_kar=True"
         )
 
-    # Determine transform based on backbone
+    kar_kwargs: dict[str, np.ndarray | None] = (
+        {"item_emb": item_embeddings, "user_emb": user_embeddings} if use_kar else {}
+    )
+
     from src.models import get_backbone
 
     spec = get_backbone(backbone_name)
 
     if spec.needs_graph:
-        if use_kar:
-            transform: grain.MapTransform = KARIndexTransform(
-                item_embeddings, user_embeddings
-            )
-        else:
-            transform = IndexOnlyTransform()
+        batch_fn = _make_index_batch_fn(**kar_kwargs)
     elif spec.needs_sequence:
         from src.features.sequences import load_sequences
 
@@ -374,52 +257,37 @@ def create_train_loader(
         if backbone_name == "din":
             user_features = load_user_features(features_dir)
             item_features = load_item_features(features_dir)
-            if use_kar:
-                transform = KARDINLookupTransform(
-                    user_features, item_features, sequences, seq_lengths,
-                    item_embeddings, user_embeddings,
-                )
-            else:
-                transform = DINLookupTransform(
-                    user_features, item_features, sequences, seq_lengths
-                )
+            batch_fn = _make_din_batch_fn(
+                user_features["categorical"],
+                user_features["numerical"],
+                item_features["categorical"],
+                item_features["numerical"],
+                sequences,
+                seq_lengths,
+                **kar_kwargs,
+            )
         else:
-            # sasrec
-            if use_kar:
-                transform = KARSASRecTransform(
-                    sequences, seq_lengths, item_embeddings, user_embeddings
-                )
-            else:
-                transform = SASRecTransform(sequences, seq_lengths)
+            batch_fn = _make_sasrec_batch_fn(sequences, seq_lengths, **kar_kwargs)
     else:
         user_features = load_user_features(features_dir)
         item_features = load_item_features(features_dir)
-        if use_kar:
-            transform = KARFeatureLookupTransform(
-                user_features, item_features, item_embeddings, user_embeddings
-            )
-        else:
-            transform = FeatureLookupTransform(user_features, item_features)
+        batch_fn = _make_feature_batch_fn(
+            user_features["categorical"],
+            user_features["numerical"],
+            item_features["categorical"],
+            item_features["numerical"],
+            **kar_kwargs,
+        )
 
-    sampler = grain.IndexSampler(
-        num_records=len(source),
-        num_epochs=1,  # caller manages epoch loop
-        shard_options=grain.ShardByJaxProcess(),  # multi-device auto-sharding
+    return NumpyBatchIterator(
+        user_idx=user_idx,
+        item_idx=item_idx,
+        labels=labels,
+        batch_fn=batch_fn,
+        batch_size=batch_size,
         shuffle=shuffle,
         seed=seed,
-    )
-
-    operations: list[grain.MapTransform | grain.Batch] = [
-        transform,
-        grain.Batch(batch_size=batch_size, drop_remainder=True),
-    ]
-
-    return grain.DataLoader(
-        data_source=source,
-        sampler=sampler,
-        operations=operations,
-        worker_count=worker_count,
-        worker_buffer_size=prefetch_buffer_size,
+        drop_remainder=True,
     )
 
 
@@ -429,10 +297,7 @@ def create_train_loader(
 
 
 def steps_per_epoch(features_dir: Path, batch_size: int) -> int:
-    """Compute number of steps per epoch (accounting for drop_remainder).
-
-    grain.DataLoader does not support __len__, so we pre-compute.
-    """
+    """Compute number of steps per epoch (accounting for drop_remainder)."""
     pairs = load_train_pairs(features_dir)
     n_samples = len(pairs["labels"])
     return n_samples // batch_size

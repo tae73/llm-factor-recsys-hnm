@@ -1,6 +1,6 @@
-"""Unit tests for Grain-based data loader.
+"""Unit tests for NumpyBatchIterator-based data loader.
 
-Tests TrainPairsSource, FeatureLookupTransform, create_train_loader,
+Tests NumpyBatchIterator, batch function builders, create_train_loader,
 and steps_per_epoch with small fixture data.
 """
 
@@ -13,8 +13,9 @@ import numpy as np
 import pytest
 
 from src.training.data_loader import (
-    FeatureLookupTransform,
-    TrainPairsSource,
+    NumpyBatchIterator,
+    _make_feature_batch_fn,
+    _make_index_batch_fn,
     create_train_loader,
     steps_per_epoch,
 )
@@ -107,56 +108,157 @@ def item_features() -> dict[str, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
-# TrainPairsSource
+# NumpyBatchIterator
 # ---------------------------------------------------------------------------
 
 
-class TestTrainPairsSource:
-    def test_len_matches_labels(self, features_dir: Path):
-        source = TrainPairsSource(features_dir)
-        assert len(source) == N_PAIRS
+class TestNumpyBatchIterator:
+    def test_len_with_drop_remainder(self):
+        n = 100
+        batch_fn = lambda u, i, l: {"labels": l}
+        it = NumpyBatchIterator(
+            np.zeros(n, np.int32), np.zeros(n, np.int32), np.zeros(n, np.float32),
+            batch_fn, batch_size=30, shuffle=False,
+        )
+        assert len(it) == 3  # 100 // 30
 
-    def test_getitem_returns_correct_keys(self, features_dir: Path):
-        source = TrainPairsSource(features_dir)
-        element = source[0]
-        assert set(element.keys()) == {"user_idx", "item_idx", "label"}
+    def test_len_without_drop_remainder(self):
+        n = 100
+        batch_fn = lambda u, i, l: {"labels": l}
+        it = NumpyBatchIterator(
+            np.zeros(n, np.int32), np.zeros(n, np.int32), np.zeros(n, np.float32),
+            batch_fn, batch_size=30, shuffle=False, drop_remainder=False,
+        )
+        assert len(it) == 4  # ceil(100 / 30)
 
-    def test_getitem_types(self, features_dir: Path):
-        source = TrainPairsSource(features_dir)
-        element = source[0]
-        assert isinstance(element["user_idx"], int)
-        assert isinstance(element["item_idx"], int)
-        assert isinstance(element["label"], float)
+    def test_all_batches_correct_size(self):
+        n = 100
+        batch_fn = lambda u, i, l: {"labels": l}
+        it = NumpyBatchIterator(
+            np.zeros(n, np.int32), np.zeros(n, np.int32), np.zeros(n, np.float32),
+            batch_fn, batch_size=30, shuffle=False,
+        )
+        batches = list(it)
+        assert len(batches) == 3
+        for b in batches:
+            assert b["labels"].shape[0] == 30
+
+    def test_deterministic_same_seed(self):
+        rng = np.random.default_rng(0)
+        u = rng.integers(0, 20, 100).astype(np.int32)
+        i = rng.integers(0, 10, 100).astype(np.int32)
+        l = rng.random(100).astype(np.float32)
+        batch_fn = lambda u, i, l: {"u": u, "i": i, "labels": l}
+
+        it1 = NumpyBatchIterator(u, i, l, batch_fn, 10, shuffle=True, seed=42)
+        it2 = NumpyBatchIterator(u, i, l, batch_fn, 10, shuffle=True, seed=42)
+        b1, b2 = next(iter(it1)), next(iter(it2))
+        np.testing.assert_array_equal(b1["labels"], b2["labels"])
+
+    def test_different_seed_different_order(self):
+        rng = np.random.default_rng(0)
+        u = rng.integers(0, 20, 100).astype(np.int32)
+        i = rng.integers(0, 10, 100).astype(np.int32)
+        l = rng.random(100).astype(np.float32)
+        batch_fn = lambda u, i, l: {"labels": l}
+
+        it1 = NumpyBatchIterator(u, i, l, batch_fn, 10, shuffle=True, seed=42)
+        it2 = NumpyBatchIterator(u, i, l, batch_fn, 10, shuffle=True, seed=99)
+        b1, b2 = next(iter(it1)), next(iter(it2))
+        assert not np.array_equal(b1["labels"], b2["labels"])
+
+    def test_no_shuffle_preserves_order(self):
+        u = np.arange(20, dtype=np.int32)
+        i = np.arange(20, dtype=np.int32)
+        l = np.arange(20, dtype=np.float32)
+        batch_fn = lambda u, i, l: {"labels": l}
+
+        it = NumpyBatchIterator(u, i, l, batch_fn, 5, shuffle=False)
+        first_batch = next(iter(it))
+        np.testing.assert_array_equal(first_batch["labels"], np.arange(5, dtype=np.float32))
 
 
 # ---------------------------------------------------------------------------
-# FeatureLookupTransform
+# Batch function builders
 # ---------------------------------------------------------------------------
 
 
-class TestFeatureLookupTransform:
-    def test_map_output_keys(self, user_features, item_features):
-        transform = FeatureLookupTransform(user_features, item_features)
-        element = {"user_idx": 0, "item_idx": 0, "label": 1.0}
-        result = transform.map(element)
+class TestBatchFnBuilders:
+    def test_feature_batch_fn_keys(self, user_features, item_features):
+        fn = _make_feature_batch_fn(
+            user_features["categorical"], user_features["numerical"],
+            item_features["categorical"], item_features["numerical"],
+        )
+        u = np.array([0, 1, 2], dtype=np.int32)
+        i = np.array([3, 4, 5], dtype=np.int32)
+        l = np.array([1.0, 0.0, 1.0], dtype=np.float32)
+        result = fn(u, i, l)
         assert set(result.keys()) == {"user_cat", "user_num", "item_cat", "item_num", "labels"}
 
-    def test_map_output_shapes(self, user_features, item_features):
-        transform = FeatureLookupTransform(user_features, item_features)
-        element = {"user_idx": 5, "item_idx": 3, "label": 0.0}
-        result = transform.map(element)
-        assert result["user_num"].shape == (N_USER_NUM,)
-        assert result["user_cat"].shape == (N_USER_CAT,)
-        assert result["item_num"].shape == (N_ITEM_NUM,)
-        assert result["item_cat"].shape == (N_ITEM_CAT,)
+    def test_feature_batch_fn_shapes(self, user_features, item_features):
+        fn = _make_feature_batch_fn(
+            user_features["categorical"], user_features["numerical"],
+            item_features["categorical"], item_features["numerical"],
+        )
+        u = np.array([0, 1, 2], dtype=np.int32)
+        i = np.array([3, 4, 5], dtype=np.int32)
+        l = np.array([1.0, 0.0, 1.0], dtype=np.float32)
+        result = fn(u, i, l)
+        assert result["user_cat"].shape == (3, N_USER_CAT)
+        assert result["user_num"].shape == (3, N_USER_NUM)
+        assert result["item_cat"].shape == (3, N_ITEM_CAT)
+        assert result["item_num"].shape == (3, N_ITEM_NUM)
+        assert result["labels"].shape == (3,)
 
-    def test_map_correct_lookup(self, user_features, item_features):
-        transform = FeatureLookupTransform(user_features, item_features)
-        u_idx, i_idx = 3, 7
-        element = {"user_idx": u_idx, "item_idx": i_idx, "label": 1.0}
-        result = transform.map(element)
-        np.testing.assert_array_equal(result["user_num"], user_features["numerical"][u_idx])
-        np.testing.assert_array_equal(result["item_cat"], item_features["categorical"][i_idx])
+    def test_feature_batch_fn_correct_lookup(self, user_features, item_features):
+        fn = _make_feature_batch_fn(
+            user_features["categorical"], user_features["numerical"],
+            item_features["categorical"], item_features["numerical"],
+        )
+        u = np.array([3], dtype=np.int32)
+        i = np.array([7], dtype=np.int32)
+        l = np.array([1.0], dtype=np.float32)
+        result = fn(u, i, l)
+        np.testing.assert_array_equal(result["user_num"][0], user_features["numerical"][3])
+        np.testing.assert_array_equal(result["item_cat"][0], item_features["categorical"][7])
+
+    def test_feature_batch_fn_kar(self, user_features, item_features):
+        rng = np.random.default_rng(0)
+        item_emb = rng.random((N_ITEMS, 768)).astype(np.float32)
+        user_emb = rng.random((N_USERS, 768)).astype(np.float32)
+        fn = _make_feature_batch_fn(
+            user_features["categorical"], user_features["numerical"],
+            item_features["categorical"], item_features["numerical"],
+            item_emb, user_emb,
+        )
+        u = np.array([0, 1], dtype=np.int32)
+        i = np.array([2, 3], dtype=np.int32)
+        l = np.array([1.0, 0.0], dtype=np.float32)
+        result = fn(u, i, l)
+        assert "h_fact" in result and "h_reason" in result
+        assert result["h_fact"].shape == (2, 768)
+        np.testing.assert_array_equal(result["h_fact"][0], item_emb[2])
+        np.testing.assert_array_equal(result["h_reason"][1], user_emb[1])
+
+    def test_index_batch_fn_keys(self):
+        fn = _make_index_batch_fn()
+        u = np.array([0, 1], dtype=np.int32)
+        i = np.array([2, 3], dtype=np.int32)
+        l = np.array([1.0, 0.0], dtype=np.float32)
+        result = fn(u, i, l)
+        assert set(result.keys()) == {"user_idx", "item_idx", "labels"}
+
+    def test_index_batch_fn_kar(self):
+        rng = np.random.default_rng(0)
+        item_emb = rng.random((10, 768)).astype(np.float32)
+        user_emb = rng.random((20, 768)).astype(np.float32)
+        fn = _make_index_batch_fn(item_emb, user_emb)
+        u = np.array([0, 1], dtype=np.int32)
+        i = np.array([2, 3], dtype=np.int32)
+        l = np.array([1.0, 0.0], dtype=np.float32)
+        result = fn(u, i, l)
+        assert "h_fact" in result
+        assert result["h_fact"].shape == (2, 768)
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +269,7 @@ class TestFeatureLookupTransform:
 class TestCreateTrainLoader:
     def test_basic_iteration(self, features_dir: Path):
         loader = create_train_loader(
-            features_dir, batch_size=10, seed=42, worker_count=0, shuffle=False
+            features_dir, batch_size=10, seed=42, shuffle=False
         )
         batches = list(loader)
         assert len(batches) > 0
@@ -175,7 +277,7 @@ class TestCreateTrainLoader:
     def test_batch_shapes(self, features_dir: Path):
         batch_size = 10
         loader = create_train_loader(
-            features_dir, batch_size=batch_size, seed=42, worker_count=0, shuffle=False
+            features_dir, batch_size=batch_size, seed=42, shuffle=False
         )
         batch = next(iter(loader))
         assert batch["user_cat"].shape == (batch_size, N_USER_CAT)
@@ -186,10 +288,10 @@ class TestCreateTrainLoader:
 
     def test_deterministic_same_seed(self, features_dir: Path):
         loader1 = create_train_loader(
-            features_dir, batch_size=10, seed=42, worker_count=0, shuffle=True
+            features_dir, batch_size=10, seed=42, shuffle=True
         )
         loader2 = create_train_loader(
-            features_dir, batch_size=10, seed=42, worker_count=0, shuffle=True
+            features_dir, batch_size=10, seed=42, shuffle=True
         )
         b1 = next(iter(loader1))
         b2 = next(iter(loader2))
@@ -198,29 +300,35 @@ class TestCreateTrainLoader:
 
     def test_different_seed_different_order(self, features_dir: Path):
         loader1 = create_train_loader(
-            features_dir, batch_size=10, seed=42, worker_count=0, shuffle=True
+            features_dir, batch_size=10, seed=42, shuffle=True
         )
         loader2 = create_train_loader(
-            features_dir, batch_size=99, seed=99, worker_count=0, shuffle=True
+            features_dir, batch_size=10, seed=99, shuffle=True
         )
         b1 = next(iter(loader1))
         b2 = next(iter(loader2))
-        # Very unlikely to be identical with different seeds
         assert not np.array_equal(b1["labels"], b2["labels"])
 
     def test_drop_remainder(self, features_dir: Path):
         batch_size = 10
         loader = create_train_loader(
-            features_dir, batch_size=batch_size, seed=42, worker_count=0, shuffle=False
+            features_dir, batch_size=batch_size, seed=42, shuffle=False
         )
         for batch in loader:
             assert batch["labels"].shape[0] == batch_size
 
-    def test_worker_count_zero(self, features_dir: Path):
-        """Single-process mode should work."""
+    def test_returns_numpy_batch_iterator(self, features_dir: Path):
         loader = create_train_loader(
-            features_dir, batch_size=10, seed=42, worker_count=0, shuffle=False
+            features_dir, batch_size=10, seed=42, shuffle=False
         )
+        assert isinstance(loader, NumpyBatchIterator)
+
+    def test_worker_count_ignored(self, features_dir: Path):
+        """worker_count is kept for backward compat but ignored."""
+        loader = create_train_loader(
+            features_dir, batch_size=10, seed=42, worker_count=4, shuffle=False
+        )
+        assert isinstance(loader, NumpyBatchIterator)
         batch = next(iter(loader))
         assert batch["user_cat"].shape[0] == 10
 

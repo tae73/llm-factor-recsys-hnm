@@ -52,8 +52,6 @@ wandb/
 ray_results/
 
 # Local-only files
-CLAUDE.md
-PLAN.md
 .claude/
 tmp/
 elice-cloud-*.pem
