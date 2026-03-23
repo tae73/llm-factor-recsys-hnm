@@ -98,8 +98,10 @@
 - [x] Sequential backbone 인프라 — BackboneSpec `needs_sequence` 플래그, `DINLookupTransform` + `SASRecTransform` (data_loader), sequential train step/scoring (trainer)
 - [x] DIN/SASRec CLI + Config YAML — `scripts/train.py` din/sasrec 분기, `configs/model/din.yaml`, `configs/model/sasrec.yaml`
 - [x] DIN/SASRec 단위 테스트 — test_din.py (12), test_sasrec.py (16), test_sequences.py (6) — 100 total ALL PASS
-- [ ] DeepFM 학습 + 평가 실행
-- [ ] Level 1 baseline 결과 기록
+- [x] DeepFM 학습 실행 — 9 epochs (early stop), best epoch 6, MAP@12=0.001773, 7,953초 (A100 MIG 3g.40gb)
+- [x] PRNGKey save/load 버그 수정 (`_save_model_state`, `_load_model_state`)
+- [ ] Level 1 baseline 전체 평가 (scoring 배치화 필요 — per-user 413K에 ~3.5시간)
+- [ ] scoring 배치화 (`score_full_catalog` → batched vmap)
 
 ## Phase 3: 세그멘테이션 & 분석 (Week 8-10)
 

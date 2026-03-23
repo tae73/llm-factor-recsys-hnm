@@ -153,7 +153,17 @@ def create_train_state(
             rngs=rngs,
         )
 
-    optimizer = nnx.Optimizer(model, optax.adam(learning_rate=train_config.learning_rate), wrt=nnx.Param)
+    optimizer = nnx.Optimizer(
+        model,
+        optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adamw(
+                learning_rate=train_config.learning_rate,
+                weight_decay=1e-5,
+            ),
+        ),
+        wrt=nnx.Param,
+    )
     return model, optimizer
 
 
@@ -480,22 +490,99 @@ def generate_predictions(
     backbone_name: str = "deepfm",
     sequences: np.ndarray | None = None,
     seq_lengths: np.ndarray | None = None,
+    batch_size: int = 256,
 ) -> dict[str, list[str]]:
-    """Generate top-K predictions for target users."""
-    predictions: dict[str, list[str]] = {}
+    """Generate top-K predictions for target users (batched for speed)."""
+    spec = get_backbone(backbone_name)
 
+    # Use batched scoring for feature-based models (final full predictions)
+    if not spec.needs_graph and not spec.needs_sequence and batch_size > 1:
+        return _generate_predictions_batched(
+            model, target_user_ids, user_features, item_features,
+            user_to_idx, idx_to_item, k, batch_size,
+        )
+
+    # Per-user scoring (mid-epoch validation, graph/sequential models)
+    predictions: dict[str, list[str]] = {}
     for uid in target_user_ids:
         u_idx = user_to_idx.get(uid)
         if u_idx is None:
             predictions[uid] = []
             continue
-
         top_item_indices = score_full_catalog(
             model, u_idx, user_features, item_features, k=k, backbone_name=backbone_name,
             sequences=sequences, seq_lengths=seq_lengths,
         )
         predictions[uid] = [idx_to_item[idx] for idx in top_item_indices]
+    return predictions
 
+
+def _generate_predictions_batched(
+    model: nnx.Module,
+    target_user_ids: list[str],
+    user_features: dict[str, np.ndarray],
+    item_features: dict[str, np.ndarray],
+    user_to_idx: dict[str, int],
+    idx_to_item: dict[int, str],
+    k: int = 12,
+    batch_size: int = 256,
+) -> dict[str, list[str]]:
+    """Batched full-catalog scoring for feature-based models (DeepFM, DCNv2).
+
+    For each batch of users, broadcasts user features against ALL items
+    and scores in a single forward pass: (batch_users * n_items, ...).
+    """
+    n_items = item_features["categorical"].shape[0]
+    item_cat = item_features["categorical"]  # (n_items, 5)
+    item_num = item_features["numerical"]    # (n_items, 2)
+
+    # Pre-convert item features to JAX (reused across all user batches)
+    item_cat_jax = jnp.array(item_cat, dtype=jnp.int32)
+    item_num_jax = jnp.array(item_num, dtype=jnp.float32)
+
+    # Filter valid users
+    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
+    invalid_users = {uid for uid in target_user_ids if uid not in user_to_idx}
+
+    model.eval()
+    predictions: dict[str, list[str]] = {uid: [] for uid in invalid_users}
+
+    for batch_start in range(0, len(valid_pairs), batch_size):
+        batch_pairs = valid_pairs[batch_start:batch_start + batch_size]
+        batch_uids = [p[0] for p in batch_pairs]
+        batch_idxs = np.array([p[1] for p in batch_pairs])
+        n_batch = len(batch_idxs)
+
+        # User features for this batch: (n_batch, d) → repeat for each item
+        u_cat = user_features["categorical"][batch_idxs]  # (n_batch, 3)
+        u_num = user_features["numerical"][batch_idxs]    # (n_batch, 8)
+
+        # Tile: each user paired with all items → (n_batch * n_items, ...)
+        u_cat_tiled = jnp.repeat(jnp.array(u_cat, dtype=jnp.int32), n_items, axis=0)
+        u_num_tiled = jnp.repeat(jnp.array(u_num, dtype=jnp.float32), n_items, axis=0)
+        i_cat_tiled = jnp.tile(item_cat_jax, (n_batch, 1))
+        i_num_tiled = jnp.tile(item_num_jax, (n_batch, 1))
+
+        inp = DeepFMInput(
+            user_cat=u_cat_tiled,
+            user_num=u_num_tiled,
+            item_cat=i_cat_tiled,
+            item_num=i_num_tiled,
+        )
+        scores = model.predict_proba(inp)  # (n_batch * n_items,)
+        scores = scores.reshape(n_batch, n_items)  # (n_batch, n_items)
+
+        top_k = jnp.argsort(scores, axis=-1)[:, ::-1][:, :k]  # (n_batch, k)
+        top_k_np = np.array(top_k)
+
+        for i, uid in enumerate(batch_uids):
+            predictions[uid] = [idx_to_item[int(idx)] for idx in top_k_np[i]]
+
+        if (batch_start // batch_size) % 10 == 0:
+            done = batch_start + n_batch
+            print(f"  Predictions: {done:,}/{len(valid_pairs):,} users")
+
+    model.train()
     return predictions
 
 
@@ -533,6 +620,7 @@ def validate_sample(
     predictions = generate_predictions(
         model, sample_users, user_features, item_features, user_to_idx, idx_to_item, k,
         backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
+        batch_size=1,  # per-user scoring to avoid OOM during validation
     )
 
     sample_gt = {u: ground_truth[u] for u in sample_users}
@@ -614,6 +702,15 @@ def run_training(
         seq_lengths = seq_data["seq_lengths"]
         print(f"  Sequences: max_len={sequences.shape[1]}, "
               f"users_with_seq={int(np.sum(seq_lengths > 0)):,}")
+
+    # --- Normalize numerical features (z-score, in-memory) ---
+    for feat_dict, name in [(user_features, "user"), (item_features, "item")]:
+        num = feat_dict["numerical"]
+        mu = num.mean(axis=0, keepdims=True)
+        sigma = num.std(axis=0, keepdims=True) + 1e-8
+        feat_dict["numerical"] = ((num - mu) / sigma).astype(np.float32)
+        print(f"  {name} numerical normalized: mean≈{feat_dict['numerical'].mean():.4f}, "
+              f"std≈{feat_dict['numerical'].std():.4f}")
 
     print(f"  Users: {feature_meta['n_users']:,}")
     print(f"  Items: {feature_meta['n_items']:,}")
@@ -826,6 +923,7 @@ def run_training(
     predictions = generate_predictions(
         model, target_users, user_features, item_features, user_to_idx, idx_to_item,
         backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
+        batch_size=4,  # 4 users × 105K items per batch (memory-safe)
     )
 
     pred_path = predictions_dir / f"{backbone_name}_{split}.json"
@@ -1426,7 +1524,11 @@ def _save_model_state(model: nnx.Module, path: Path) -> None:
     save_dict = {}
     for key_path, leaf in flat_state:
         key_str = "/".join(str(k) for k in key_path)
-        save_dict[key_str] = np.array(leaf)
+        # PRNGKey arrays cannot be converted directly; extract underlying data
+        if hasattr(leaf, "dtype") and jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            save_dict[key_str] = np.array(jax.random.key_data(leaf))
+        else:
+            save_dict[key_str] = np.array(leaf)
     np.savez(path / "params.npz", **save_dict)
 
 
@@ -1434,8 +1536,14 @@ def _load_model_state(model: nnx.Module, path: Path) -> None:
     """Load model parameters from .npz."""
     npz = np.load(path / "params.npz")
     state = nnx.state(model)
-    flat_state = jax.tree.leaves_with_path(state)
-    for key_path, leaf in flat_state:
+
+    def _restore_leaf(key_path: tuple, leaf: Any) -> Any:
         key_str = "/".join(str(k) for k in key_path)
-        if key_str in npz:
-            leaf[...] = jnp.array(npz[key_str])
+        if key_str not in npz:
+            return leaf
+        if hasattr(leaf, "dtype") and jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            return jax.random.wrap_key_data(npz[key_str])
+        return jnp.array(npz[key_str])
+
+    restored = jax.tree.map_with_path(_restore_leaf, state)
+    nnx.update(model, restored)
