@@ -1423,3 +1423,95 @@ data/processed/articles.parquet ────────────────
                     ├──→ data/segmentation/product_clusters.parquet
                     └──→ data/segmentation/clustering_meta.json
 ```
+
+---
+
+## 9. Knowledge-Purchase Analysis (`scripts/analyze_knowledge.py`)
+
+세그멘테이션 보완 분석: LLM 추출 L1/L2/L3 속성의 구매 예측 가치를 정보이론적·임베딩적으로 검증.
+
+### CLI Usage
+
+```bash
+# 전체 분석 (MI + Cold-Start + Layer Info + Diversity)
+python scripts/analyze_knowledge.py \
+    --data-dir data/processed \
+    --fk-dir data/knowledge/factual \
+    --features-dir data/features \
+    --embeddings-dir data/embeddings \
+    --output-dir results/analysis
+
+# 특정 컴포넌트만 실행
+python scripts/analyze_knowledge.py ... --component mi
+python scripts/analyze_knowledge.py ... --component cold-start
+python scripts/analyze_knowledge.py ... --component layer-info
+python scripts/analyze_knowledge.py ... --component diversity
+
+# 파라미터 조정
+python scripts/analyze_knowledge.py \
+    --mi-sample-size 5000000 \
+    --cs-sample-users 30000 \
+    --div-sample-users 50000 \
+    --verbose
+```
+
+### 4 Components
+
+| Component | Module | Description |
+|-----------|--------|-------------|
+| A. MI | `src/analysis/mutual_information.py` | 속성별 NMI, PMI, Conditional MI |
+| B. Layer Info | `src/analysis/layer_information.py` | CKA, Purchase Coherence, Separation AUC |
+| C. Diversity | `src/analysis/preference_diversity.py` | User JSD, Entropy, Temporal Stability, RVI |
+| D. Cold-Start | `src/analysis/cold_start.py` | 구매수 구간별 Content-Based Retrieval |
+
+### Key Functions
+
+```python
+# Component A: Mutual Information
+from src.analysis.mutual_information import compute_attribute_mi, compute_pmi_by_value, compute_conditional_mi
+mi_results = compute_attribute_mi(features_dir, fk_path, articles_path, sample_size=10_000_000)
+# Returns: list[MIResult(attribute, layer, mi, nmi, n_values)]
+
+# Component B: Layer Information
+from src.analysis.layer_information import compute_linear_cka, compute_purchase_coherence, compute_purchase_separation_auc
+cka = compute_linear_cka(X_l1, X_l2)  # CKA between two embedding matrices
+# Returns: float in [0, 1]
+
+# Component C: Preference Diversity
+from src.analysis.preference_diversity import compute_preference_diversity
+div_results = compute_preference_diversity(train_txn_path, fk_path, articles_path)
+# Returns: list[DiversityResult(attribute, layer, mean_user_entropy, mean_pairwise_jsd, temporal_stability, recommendation_value_index)]
+
+# Component D: Cold-Start
+from src.analysis.cold_start import compute_contentbased_retrieval, run_all_combos
+bracket_results = compute_contentbased_retrieval(embeddings, item_ids, user_history, val_gt, "L1+L2+L3")
+# Returns: list[BracketResult(bracket, layer_combo, hr_at_12, ndcg_at_12, mrr, n_users)]
+```
+
+### Output
+
+```
+results/analysis/
+├── mi_results.csv           # NMI per attribute (sorted)
+├── conditional_mi.json      # MI(L2|L1), MI(L3|L1+L2)
+├── cold_start_results.csv   # HR@12 per bracket × layer combo
+├── separation_auc.json      # AUC per layer combo
+└── diversity_results.csv    # Entropy, JSD, RVI per attribute
+```
+
+### Pipeline Position
+
+```
+data/features/train_pairs.npz ─────────────┐
+data/features/id_maps.json ────────────────┤
+data/knowledge/factual/factual_knowledge.parquet ─┤
+data/processed/articles.parquet ───────────┤
+data/processed/train_transactions.parquet ─┤
+data/processed/val_ground_truth.json ──────┤
+data/embeddings/item_bge_embeddings.npz ───┘
+                    │
+                    ▼
+        scripts/analyze_knowledge.py
+                    │
+                    └──→ results/analysis/
+```

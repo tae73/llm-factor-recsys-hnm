@@ -183,6 +183,43 @@
 - DS 시사점: 3종 대안 모두 eff_k < 3.0 → 구조화 빈도 벡터의 표현력 한계 정량 실증. text→BGE 768D 경로(Semantic)가 3.8배 효과적 — KAR text_composer.py→BGE 경로의 필요성을 방법론적으로 정당화
 - Research Motivation 연결: negative result + positive 대조가 동시에 기여 — 구조화 벡터 한계 실증 + Semantic을 통한 L2/L3 정보 가치 입증이 text-based KAR 아키텍처의 설계 근거를 완성
 
+### Contribution 3-9: Attribute-Purchase MI — L2/L3의 구매 예측 시그널 정량화 (MD+DS)
+- 수치: 24개 속성 NMI, 10M subsampled train pairs (121.8M 중)
+- 수치: Raw MI top: section(meta, 0.114) > index(meta, 0.083) > **style_lineage(L3, 0.041)** > **style_mood(L2, 0.031)** > garment_group(meta, 0.029) > product_type(meta, 0.027)
+- 수치: Conditional MI(L2|L1) = 0.148, MI(L3|L1+L2) = **0.185** (가장 큰 비중복 정보), MI(L2|metadata) = 0.140
+- 수치: Layer 평균 NMI: metadata 0.0131 > L1 0.0043 > L3 0.0034 ≈ L2 0.0033
+- 수치: NMI는 고-카디널리티 속성(style_lineage 303값, style_mood 727값)에 불리 (분모 H(A) 큼) → Raw MI가 더 공정한 비교
+- MD 시사점: style_lineage(패션 이론 계보)가 비-메타데이터 속성 중 가장 강한 구매 시그널 — "Scandinavian Minimalism" 같은 패션 이론 개념이 실제 구매 패턴과 연결
+- DS 시사점: Conditional MI 양수 = 각 Layer가 비중복 정보 포함. L3의 MI(L3|L1+L2)=0.185가 최대 → Phase 5에서 L3 제거 시 가장 큰 성능 저하 예측. 3-Layer Taxonomy의 비중복성 정보이론적 정당화
+- Research Motivation 연결: NMI가 높은 L2/L3 = CF가 못 잡는 구매 시그널 → sparse 환경에서 content-based 경로의 가치 입증
+
+### Contribution 3-10: CKA + Separation AUC — BGE 임베딩 공간의 Layer 독립성 (DS)
+- 수치: 7×7 CKA 행렬 (5K item sample), CKA(L1,L3)=0.788 (최대 차이), CKA(L2,L3)=0.868, CKA(L1,L2)=0.821
+- 수치: CKA(L2+L3, L1+L2+L3)=0.867 → L1 추가로 13.3% 표현 변화 (가장 큰 단일-layer 효과)
+- 수치: CKA(L1, L1+L2+L3)=0.935 → L2+L3 추가로 6.5% 표현 변화
+- 수치: Separation AUC: L1 0.709, L2 0.703, L3 0.704, L1+L2 0.697, L1+L2+L3 0.694 (모두 0.69~0.71)
+- DS 시사점: Layer 간 CKA < 1.0 = BGE 공간에서 서로 다른 표현 학습. 단, 순수 cosine AUC는 변형 간 차이 미미(0.69~0.71) → KAR Expert의 non-linear 변환이 이 차이를 증폭시켜야 함
+- Research Motivation 연결: CKA 분석이 3-Layer 비중복성을 임베딩 수준에서 추가 확인 (MI의 정보이론적 증거와 상호 보완)
+
+### Contribution 3-11: Preference Diversity — L2/L3가 추천에 가장 가치 있는 속성 (MD+DS)
+- 수치: RVI(JSD/entropy) Top-5 전부 L2/L3: perceived_quality(L2, 0.535), season_fit(L2, 0.525), coordination_role(L3, 0.492), versatility(L2, 0.488), trendiness(L2, 0.478)
+- 수치: Temporal stability: L2/L3 저-카디널리티 0.80-0.87 vs metadata 0.35-0.52 (product_type 0.349, colour_group 0.523)
+- 수치: JSD(유저 간 차별화): style_mood(L2, 0.743) > product_type(meta, 0.739) > section(meta, 0.728)
+- 수치: 100K 유저 샘플, 100K 유저 쌍 JSD, 지수 감쇠 가중(halflife=90일)
+- MD 시사점: perceived_quality(품질 기대치)와 coordination_role(코디 역할 선호)은 H&M 메타데이터에 전혀 없는 차원이면서 유저 간 가장 차별화되고 시간적으로 안정적 — 근본적 취향을 포착
+- DS 시사점: 세그멘테이션 CLT 붕괴(Contribution 3-7)를 속성-레벨 직접 측정으로 우회. RVI가 높은 L2/L3 속성이 KAR Factual Expert에서 가장 큰 기여 예측. 클러스터링 없이도 유저 선호 차별화 정량 가능
+- Research Motivation 연결: L2/L3가 포착하는 선호(품질 기대치, 계절 선호, 코디 역할)는 metadata보다 시간적으로 더 안정(0.80+ vs 0.35) → 장기적 추천 품질에 기여
+
+### Contribution 3-12: Cold-Start Content-Based Retrieval — Sparse 유저에서 속성 가치 직접 입증 (DS)
+- 수치: 50K 유저 × 105K 아이템 × 7종 ablation, 6 구간별 HR@12/NDCG@12/MRR
+- 수치: 1건 유저 HR@12: L1 2.47%, L1+L2 2.26%, L1+L2+L3 2.36% (L1 단독 최강)
+- 수치: 2-4건 유저 HR@12: L1 3.03%, **L1+L2 3.28%** (전체 최고), L1+L2+L3 3.14%
+- 수치: Sparse(1-4건) HR@12 2.5-3.3% > Heavy(50+) HR@12 0.5-1.2% — content-based가 sparse에서 더 유효
+- 수치: L2/L3 단독은 L1보다 약함 (L2 1.95%, L3 1.54% vs L1 2.47% at 1건)
+- 수치: L1+L2 > L1+L2+L3 > L1 > L1+L3 > L2+L3 > L2 > L3 (2-4건 기준)
+- DS 시사점: L1(소재/핏/실루엣)이 가장 강한 단독 content-based 시그널. L2(스타일/무드)는 보완재로 작동(L1+L2가 best). Content-based HR@12가 KAR 모델의 최소 기대 바닥값
+- Research Motivation 연결: Triple-Sparsity 환경에서 1-4건 유저에 대한 content-based 추천 성능을 직접 측정 — CF 시그널이 불충분한 환경에서 속성 기반 경로의 실용적 가치 정량화. Phase 5 Cold-start 실험과 직접 비교 가능
+
 ## Phase 4: KAR Module Implementation
 
 ### Contribution 4-1: 5종 백본 모델 embed()/predict_from_embedding() 분리 — Backward-Compatible (DS)
@@ -240,6 +277,6 @@
 | 0 | Gini=0.7586, 99.98% sparse, Pop>UserKNN>BPR-MF | CF 구조적 실패 정량화 |
 | 1 | 105K×22 attr, 100% cov, error 0.53%, $8.50, Judge 4.43/5.0 (n=198, 90.9% pass) | Content-Based 인프라 완성 |
 | 2 | 5x 정보 확장(5→24 dims), L2/L3 zero-overlap, 876K batch(100% 최종 성공, retry 2,845→전원 복구, fallback 0), 1,298,206 유저 parquet, Heavy/Moderate/Niche discriminable, Eval: completeness 99.99%, sim=0.259, Judge 4.86/5.0 (n=200, 100% pass), Go/No-Go 6/6 GO | 유저 프로파일 + 배치 추출 + 품질 검증 완성 |
-| 3 | 1.3M유저×5레벨, StandardScaler+whiten+isotropy fix, L2 sil 0.204→0.472, Product ARI 0.449→0.522, 10 topics(↑5), 85 unit tests, L2/L3 구조화 벡터 붕괴(eff_k=1.08/1.76→CLR 2.72/UMAP 2.63, all<3.0 MARGINAL) = **표현 형식 한계**, Semantic eff_k=10.30(reasoning_text: L2 5필드+L3 3필드 합성→BGE 768D) = **L2/L3 정보 가치 직접 증거**, 구조화 best 2.72 vs Semantic 10.30 = 3.8배 | 전처리 개선 + 분석 함수 확충 + L2/L3 표현 형식 한계 진단 + Semantic 대조로 정보 가치 입증 |
+| 3 | **Tier 1**: 1.3M유저×5레벨, StandardScaler+whiten+isotropy fix, L2 sil 0.204→0.472, Product ARI 0.449→0.522, L2/L3 구조화 벡터 붕괴(eff_k<3.0) = 표현 형식 한계, Semantic eff_k=10.30 = 정보 가치 증거 (3.8배). **Tier 1.5**: MI(L3\|L1+L2)=0.185(최대 비중복 정보), Raw MI style_lineage(L3) 전체 3위, RVI Top-5 전부 L2/L3(perceived_quality 0.535), CKA(L1,L3)=0.788(최대 표현 차이), Temporal stability L2/L3 0.80-0.87 > metadata 0.35-0.52, Cold-Start 2-4건 L1+L2 HR@12=3.28%(최고), Sparse>Heavy (content-based가 sparse에서 더 유효), 8 figures, 41+85=126 unit tests | Tier 1: 세그멘테이션 진단 + Semantic 대조. Tier 1.5: 속성-구매 관계 직접 정량화 — L2/L3 비중복성(MI), 추천 가치(RVI), 임베딩 독립성(CKA), Cold-start 보상(HR@12) 4중 증거 |
 | 4 | 5종 백본 embed/predict 분리(atol<1e-5), KAR 2-Expert(Expert+4G+4F), KARModel composition(backbone 수정 0줄), 3-Stage multi-stage(BCE→align+div→full), BGE 인덱스 정렬(48 zero-pad, 0.05%), 4종 KAR Transform, Pre-store .npz, 73건 신규 테스트(199 total PASS) | KAR 모듈 구현 완료, Phase 5 실험 인프라 확보 |
 | 5 | (TBD) | 최종 성능 비교 |

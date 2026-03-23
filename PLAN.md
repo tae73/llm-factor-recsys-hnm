@@ -121,6 +121,20 @@
 - [x] L2/L3 구조화 벡터 붕괴 진단 — 표현 형식 한계 (정보 가치 아님). 아이템 엔트로피(L2 evenness 0.668, L3 0.760), CLT 수렴(L2 12x 분산 감소), PCA 집중도(PC1: L2 9.9%, L3 12.6%). **Semantic 대조**: reasoning_text(L2 5필드+L3 3필드)→BGE 768D의 eff_k=10.30이 L2/L3 정보 가치 직접 증명
 - [x] 전처리 개선 실험 — TF-IDF/CLR/UMAP 3종 비교, best: CLR(L2 eff_k 2.72)/UMAP(L3 eff_k 2.63), 모두 <3.0 MARGINAL. 구조화 best 2.72 vs Semantic 10.30 = 3.8배 → 구조화 벡터 표현력 한계 정량 실증
 
+### Tier 1.5 (Knowledge-Purchase 분석 — 세그멘테이션 보완)
+- [x] `src/analysis/` 모듈 구현 (mutual_information, layer_information, preference_diversity, cold_start) — 41 tests ALL PASS
+- [x] `scripts/analyze_knowledge.py` CLI (Typer, 5개 컴포넌트: mi, diversity, layer-info, cold-start, ablation-emb)
+- [x] 단위 테스트 `tests/unit/test_analysis/` — 41 tests, 기존 테스트 무파괴 (684 total ALL PASS)
+- [x] Component A (MI) 실행 완료 — Conditional MI: MI(L3|L1+L2)=0.185 > MI(L2|L1)=0.148. Raw MI: style_lineage(L3) 전체 3위
+- [x] Component C (Diversity) 실행 완료 — RVI Top-5 전부 L2/L3: perceived_quality(0.535), season_fit(0.525), coordination_role(0.492)
+- [x] `src/analysis/ablation_embeddings.py` — 7종 ablation BGE 임베딩 생성 모듈
+- [x] Ablation 임베딩 생성 실행 (7종 × 105K items, ~924MB total)
+- [x] Component B (Layer Info) 실행 — CKA: L1↔L3=0.788 (최대 차이), Separation AUC 0.69~0.71 (변형 간 비슷)
+- [x] Component D (Cold-Start) 실행 — L1+L2가 2-4건 구간 HR@12=3.28% (최고), Sparse 유저에서 content-based 가장 유효
+- [x] notebooks/05a_knowledge_purchase_analysis.ipynb (18 cells, 6 figures) — MI + CKA + Diversity 시각화
+- [x] notebooks/05b_knowledge_sparsity_analysis.ipynb (11 cells, 2 figures) — Cold-Start HR@12 시각화
+- [x] contribution_notes.md 업데이트 — Contribution 3-9(MI) + 3-10(CKA) + 3-11(Diversity) + 3-12(Cold-Start) + 누적 수치 요약
+
 ### Tier 2 (후속)
 - [ ] Affinity Matrix 계산
 - [ ] 카탈로그 갭 분석
