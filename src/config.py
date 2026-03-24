@@ -441,3 +441,38 @@ class KARConfig(NamedTuple):
     stage2_epochs: int = 5  # Expert adaptor (align+div, backbone frozen)
     stage3_epochs: int = 3  # End-to-end (BCE+align+div)
     stage3_lr_factor: float = 0.1  # LR multiplier for stage 3
+
+
+# ---------------------------------------------------------------------------
+# Re-Ranker Configuration (GBDT 2nd-stage)
+# ---------------------------------------------------------------------------
+
+
+class ReRankerConfig(NamedTuple):
+    """LightGBM GBDT Re-Ranker hyperparameters."""
+
+    top_k: int = 100  # Stage 1 candidate pool size
+    n_estimators: int = 500
+    max_depth: int = 6
+    learning_rate: float = 0.05
+    num_leaves: int = 31
+    min_child_samples: int = 20
+    subsample: float = 0.8
+    colsample_bytree: float = 0.8
+    random_seed: int = 42
+
+
+class ReRankerResult(NamedTuple):
+    """Re-ranker training + evaluation summary."""
+
+    output_dir: Path
+    n_train_samples: int
+    n_val_samples: int
+    n_features: int
+    best_iteration: int
+    val_auc: float
+    map_at_12: float
+    hr_at_12: float
+    ndcg_at_12: float
+    mrr: float
+    top_features: list[tuple[str, float]]  # (name, importance) top-20

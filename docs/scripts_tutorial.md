@@ -69,7 +69,27 @@ python scripts/train.py \
     --gating g2 --fusion f2 \
     --no-wandb
 
-# 3f. Pre-store expert outputs for serving
+# 3f. GBDT Re-Ranker (2-stage baseline)
+# Base mode (score + user/item features only)
+python scripts/train_reranker.py \
+    --stage1-model-dir results/models \
+    --stage1-backbone deepfm \
+    --data-dir data/processed \
+    --features-dir data/features \
+    --output-dir results/reranker \
+    --mode base --no-wandb
+# Full mode (Base + L1/L2/L3 attributes + BGE similarity)
+python scripts/train_reranker.py \
+    --stage1-model-dir results/models \
+    --stage1-backbone deepfm \
+    --data-dir data/processed \
+    --features-dir data/features \
+    --fk-dir data/knowledge/factual \
+    --embeddings-dir data/embeddings \
+    --output-dir results/reranker \
+    --mode full --no-wandb
+
+# 3g. Pre-store expert outputs for serving
 python scripts/prestore.py \
     --model-dir results/models \
     --features-dir data/features \

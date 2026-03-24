@@ -103,6 +103,17 @@
 - [ ] Level 1 baseline 전체 평가 (scoring 배치화 필요 — per-user 413K에 ~3.5시간)
 - [ ] scoring 배치화 (`score_full_catalog` → batched vmap)
 
+### Phase 2.5b: GBDT Re-Ranker Baseline (2-stage)
+- [x] `src/config.py` — ReRankerConfig, ReRankerResult 추가
+- [x] `src/models/reranker.py` — LightGBM wrapper (train/predict/save/load/feature_importance)
+- [x] `src/features/reranker_features.py` — Attribute encoding + feature builder (Base 21D / Full ~127D)
+- [x] `src/training/trainer.py` — `extract_stage1_candidates()` 추가 (기존 함수 무수정)
+- [x] `scripts/train_reranker.py` — CLI (Typer, --mode base/full)
+- [x] `configs/model/reranker.yaml` — LightGBM 하이퍼파라미터
+- [x] `pyproject.toml` — lightgbm>=4.0.0 의존성 추가
+- [x] 단위 테스트 — test_reranker.py (~20 tests)
+- [ ] ReRank-Base vs ReRank-Full 실험 실행
+
 ## Phase 3: 세그멘테이션 & 분석 (Week 8-10)
 
 ### Tier 1 (완료)
