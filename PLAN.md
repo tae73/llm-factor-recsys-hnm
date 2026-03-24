@@ -104,7 +104,11 @@
 - [x] DCNv2 안정화 — CrossLayerV2에 LayerNorm 추가 (MoE residual 폭발 해결)
 - [x] DCNv2 v16 학습 — **MAP@12=0.004515** (best epoch 8), Popularity(0.003783) 돌파 (119%)
 - [x] NumpyBatchIterator 교체 + chunked prediction scoring 구현
+- [x] DeepFM + LayerNorm 학습 — **MAP@12=0.004020** (best epoch 2), Popularity 돌파 (106%)
+- [x] LightGCN 시도 — OOM (1.4M node graph, 40GB MIG 초과)
+- [x] ReRank-Base (DeepFM→LightGBM) — MAP@12=0.000193 (Stage 1 recall 부족으로 저조)
 - [ ] DCNv2 전체 유저(366K) prediction 생성 + MAP@12 확정 (~5시간 배치)
+- [ ] DeepFM+LayerNorm 전체 유저(366K) prediction 생성 + MAP@12 확정 (~3시간 배치)
 - [ ] Level 1 baseline 결과 확정 (DeepFM vs DCNv2 비교 테이블)
 
 ### Phase 2.5b: GBDT Re-Ranker Baseline (2-stage)
@@ -335,14 +339,17 @@ done
 | Model | MAP@12 | HR@12 | NDCG@12 | MRR | vs Popularity |
 |-------|--------|-------|---------|-----|--------------|
 | **DCNv2 + LayerNorm (v16)** | **0.004515** | **0.053** | **0.009704** | **0.023861** | **119.3%** |
-| DeepFM (v1) | 0.001773 | 0.019 | 0.003334 | 0.005361 | 46.9% |
+| DeepFM + LayerNorm | 0.004020 | 0.057 | 0.009398 | 0.018127 | 106.3% |
+| DeepFM v1 (원본) | 0.001773 | 0.019 | 0.003334 | 0.005361 | 46.9% |
+| ReRank-Base (DeepFM→GBDT) | 0.000193 | 0.005 | 0.000632 | 0.001408 | 5.1% |
+| LightGCN | OOM | — | — | — | 1.4M node graph 초과 |
 
 **핵심 발견:**
-- DCNv2의 Cross Network (explicit high-order interaction)이 DeepFM의 FM (2nd-order)보다 254% 높은 MAP@12
-- DCNv2는 LayerNorm 없이는 loss 발산 (32B) — Cross Layer의 MoE residual 누적 문제
-- DeepFM은 logit 폭발 (loss 16K) + BCE-ranking 불일치로 Popularity 미달
-- 동일 메타데이터 피처에서 모델 아키텍처가 성능을 2.5x 차이나게 함
-- 전체 유저(366K) 평가는 미완료 (DCNv2 ~5시간 배치 필요)
+- **LayerNorm이 두 모델 모두에서 핵심** — DeepFM 2.27x, DCNv2 ∞ (발산→정상) 향상
+- DCNv2(119%) > DeepFM(106%) — Cross Network의 high-order interaction이 FM 2nd-order보다 우수하지만 격차는 12%로 예상보다 작음
+- ReRank-Base 실패 — Stage 1(DeepFM) recall 부족으로 GBDT re-ranking 무효
+- LightGCN — 1.4M 노드 그래프가 40GB MIG 초과, 실행 불가
+- 전체 유저(366K) 평가는 미완료 (DCNv2 ~5시간, DeepFM ~3시간 배치 필요)
 
 ### Phase 0 EDA 주요 발견
 

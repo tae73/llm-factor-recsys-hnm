@@ -83,6 +83,10 @@ class DeepFM(nnx.Module):
         self.dnn_layers = nnx.List(dnn_layers)
         self.dnn_output = nnx.Linear(in_dim, 1, rngs=rngs)
 
+        # --- LayerNorm for FM/DNN output stabilization ---
+        self.fm_layer_norm = nnx.LayerNorm(1, rngs=rngs)
+        self.dnn_layer_norm = nnx.LayerNorm(1, rngs=rngs)
+
         # --- Global bias ---
         self.bias = nnx.Param(jnp.zeros(()))
 
@@ -150,6 +154,8 @@ class DeepFM(nnx.Module):
                 h = layer(h)
         dnn_out = self.dnn_output(h)
 
+        fm_second = self.fm_layer_norm(fm_second)
+        dnn_out = self.dnn_layer_norm(dnn_out)
         logits = self.bias[...] + first_order + fm_second + dnn_out
         return logits.squeeze(-1)
 

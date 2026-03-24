@@ -178,7 +178,7 @@ def main(
 
         candidates = extract_stage1_candidates(
             model, target_user_ids, user_features, item_features,
-            user_to_idx, top_k=top_k, batch_size=64,
+            user_to_idx, top_k=top_k, batch_size=4,
         )
 
         if cache_candidates:
