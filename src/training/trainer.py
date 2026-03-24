@@ -485,11 +485,12 @@ def generate_predictions(
     """Generate top-K predictions for target users (batched for speed)."""
     spec = get_backbone(backbone_name)
 
-    # Use batched scoring for feature-based models (final full predictions)
+    # Use chunked scoring for feature-based models (memory-efficient)
     if not spec.needs_graph and not spec.needs_sequence and batch_size > 1:
-        return _generate_predictions_batched(
+        return _generate_predictions_chunked(
             model, target_user_ids, user_features, item_features,
-            user_to_idx, idx_to_item, k, batch_size,
+            user_to_idx, idx_to_item, k,
+            user_batch_size=batch_size, item_chunk_size=2048,
         )
 
     # Per-user scoring (mid-epoch validation, graph/sequential models)
@@ -574,6 +575,165 @@ def _generate_predictions_batched(
 
     model.train()
     return predictions
+
+
+def _generate_predictions_chunked(
+    model: nnx.Module,
+    target_user_ids: list[str],
+    user_features: dict[str, np.ndarray],
+    item_features: dict[str, np.ndarray],
+    user_to_idx: dict[str, int],
+    idx_to_item: dict[int, str],
+    k: int = 12,
+    user_batch_size: int = 64,
+    item_chunk_size: int = 2048,
+) -> dict[str, list[str]]:
+    """Chunked scoring: (user_batch × item_chunk) blocks to control memory.
+
+    Instead of scoring all 105K items at once per user batch, scores items
+    in chunks and merges top-K across chunks. Memory per step ≈ training batch.
+    """
+    n_items = item_features["categorical"].shape[0]
+    item_cat = item_features["categorical"]
+    item_num = item_features["numerical"]
+
+    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
+    invalid_users = {uid for uid in target_user_ids if uid not in user_to_idx}
+
+    model.eval()
+    predictions: dict[str, list[str]] = {uid: [] for uid in invalid_users}
+
+    for ub_start in range(0, len(valid_pairs), user_batch_size):
+        batch_pairs = valid_pairs[ub_start:ub_start + user_batch_size]
+        batch_uids = [p[0] for p in batch_pairs]
+        batch_idxs = np.array([p[1] for p in batch_pairs])
+        n_batch = len(batch_idxs)
+
+        u_cat = jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32)
+        u_num = jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32)
+
+        # Score items in chunks, collect all scores
+        all_scores = []
+        for ic_start in range(0, n_items, item_chunk_size):
+            ic_end = min(ic_start + item_chunk_size, n_items)
+            chunk_size = ic_end - ic_start
+
+            i_cat_chunk = jnp.array(item_cat[ic_start:ic_end], dtype=jnp.int32)
+            i_num_chunk = jnp.array(item_num[ic_start:ic_end], dtype=jnp.float32)
+
+            # Tile: (n_batch, ...) × (chunk_size, ...) → (n_batch * chunk_size, ...)
+            u_cat_tiled = jnp.repeat(u_cat, chunk_size, axis=0)
+            u_num_tiled = jnp.repeat(u_num, chunk_size, axis=0)
+            i_cat_tiled = jnp.tile(i_cat_chunk, (n_batch, 1))
+            i_num_tiled = jnp.tile(i_num_chunk, (n_batch, 1))
+
+            inp = DeepFMInput(
+                user_cat=u_cat_tiled, user_num=u_num_tiled,
+                item_cat=i_cat_tiled, item_num=i_num_tiled,
+            )
+            chunk_scores = model.predict_proba(inp)  # (n_batch * chunk_size,)
+            all_scores.append(chunk_scores.reshape(n_batch, chunk_size))
+
+        # Concat all chunks → (n_batch, n_items) → top-K
+        scores = jnp.concatenate(all_scores, axis=1)
+        top_k = jnp.argsort(scores, axis=-1)[:, ::-1][:, :k]
+        top_k_np = np.array(top_k)
+
+        for i, uid in enumerate(batch_uids):
+            predictions[uid] = [idx_to_item[int(idx)] for idx in top_k_np[i]]
+
+        if (ub_start // user_batch_size) % 10 == 0:
+            done = ub_start + n_batch
+            print(f"  Predictions: {done:,}/{len(valid_pairs):,} users")
+
+    model.train()
+    return predictions
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 Candidate Extraction (for Re-Ranker)
+# ---------------------------------------------------------------------------
+
+
+def extract_stage1_candidates(
+    model: nnx.Module,
+    target_user_ids: list[str],
+    user_features: dict[str, np.ndarray],
+    item_features: dict[str, np.ndarray],
+    user_to_idx: dict[str, int],
+    top_k: int = 100,
+    batch_size: int = 64,
+) -> dict[str, np.ndarray]:
+    """Extract top-K candidates with scores from Stage 1 model.
+
+    Extends _generate_predictions_batched() pattern to return scores + indices
+    instead of just item IDs. For feature-based models (DeepFM, DCNv2).
+
+    Args:
+        model: Trained Stage 1 model with predict_proba().
+        target_user_ids: User IDs to generate candidates for.
+        user_features: {categorical: (n_users, 3), numerical: (n_users, 8)}.
+        item_features: {categorical: (n_items, 5), numerical: (n_items, 2)}.
+        user_to_idx: user_id → feature index mapping.
+        top_k: Number of candidates per user.
+        batch_size: Users per forward-pass batch.
+
+    Returns:
+        dict with:
+        - user_indices: (N,) int32 — user feature indices
+        - candidate_indices: (N, K) int32 — item feature indices
+        - candidate_scores: (N, K) float32 — Stage 1 scores (descending)
+    """
+    n_items = item_features["categorical"].shape[0]
+    item_cat_jax = jnp.array(item_features["categorical"], dtype=jnp.int32)
+    item_num_jax = jnp.array(item_features["numerical"], dtype=jnp.float32)
+
+    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
+
+    all_user_indices: list[int] = []
+    all_candidate_indices: list[np.ndarray] = []
+    all_candidate_scores: list[np.ndarray] = []
+
+    model.eval()
+
+    for batch_start in range(0, len(valid_pairs), batch_size):
+        batch_pairs = valid_pairs[batch_start : batch_start + batch_size]
+        batch_idxs = np.array([p[1] for p in batch_pairs])
+        n_batch = len(batch_idxs)
+
+        u_cat_tiled = jnp.repeat(
+            jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32), n_items, axis=0
+        )
+        u_num_tiled = jnp.repeat(
+            jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32), n_items, axis=0
+        )
+        i_cat_tiled = jnp.tile(item_cat_jax, (n_batch, 1))
+        i_num_tiled = jnp.tile(item_num_jax, (n_batch, 1))
+
+        inp = DeepFMInput(
+            user_cat=u_cat_tiled, user_num=u_num_tiled,
+            item_cat=i_cat_tiled, item_num=i_num_tiled,
+        )
+        scores = model.predict_proba(inp).reshape(n_batch, n_items)
+
+        top_k_idx = jnp.argsort(scores, axis=-1)[:, ::-1][:, :top_k]
+        top_k_scores = jnp.take_along_axis(scores, top_k_idx, axis=-1)
+
+        all_user_indices.extend(batch_idxs.tolist())
+        all_candidate_indices.append(np.array(top_k_idx))
+        all_candidate_scores.append(np.array(top_k_scores))
+
+        done = batch_start + n_batch
+        if (batch_start // batch_size) % 20 == 0:
+            print(f"  Stage 1 extraction: {done:,}/{len(valid_pairs):,} users")
+
+    model.train()
+
+    return {
+        "user_indices": np.array(all_user_indices, dtype=np.int32),
+        "candidate_indices": np.concatenate(all_candidate_indices, axis=0),
+        "candidate_scores": np.concatenate(all_candidate_scores, axis=0),
+    }
 
 
 # ---------------------------------------------------------------------------
