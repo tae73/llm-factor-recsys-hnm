@@ -100,8 +100,12 @@
 - [x] DIN/SASRec 단위 테스트 — test_din.py (12), test_sasrec.py (16), test_sequences.py (6) — 100 total ALL PASS
 - [x] DeepFM 학습 실행 — 9 epochs (early stop), best epoch 6, MAP@12=0.001773, 7,953초 (A100 MIG 3g.40gb)
 - [x] PRNGKey save/load 버그 수정 (`_save_model_state`, `_load_model_state`)
-- [ ] Level 1 baseline 전체 평가 (scoring 배치화 필요 — per-user 413K에 ~3.5시간)
-- [ ] scoring 배치화 (`score_full_catalog` → batched vmap)
+- [x] DeepFM 성능 튜닝 (v1-v13) — logit 폭발, mode collapse, BCE-ranking 불일치 진단. Feature quality 한계 확인
+- [x] DCNv2 안정화 — CrossLayerV2에 LayerNorm 추가 (MoE residual 폭발 해결)
+- [x] DCNv2 v16 학습 — **MAP@12=0.004515** (best epoch 8), Popularity(0.003783) 돌파 (119%)
+- [x] NumpyBatchIterator 교체 + chunked prediction scoring 구현
+- [ ] DCNv2 전체 유저(366K) prediction 생성 + MAP@12 확정 (~5시간 배치)
+- [ ] Level 1 baseline 결과 확정 (DeepFM vs DCNv2 비교 테이블)
 
 ### Phase 2.5b: GBDT Re-Ranker Baseline (2-stage)
 - [x] `src/config.py` — ReRankerConfig, ReRankerResult 추가
@@ -325,6 +329,20 @@ done
 | Popularity Recent (7d) | 0.001917 | 0.029886 | 0.004531 | 0.009449 |
 | UserKNN (ALS) | 0.003036 | 0.033901 | 0.006319 | 0.012228 |
 | BPR-MF | 0.001308 | 0.016069 | 0.002839 | 0.004924 |
+
+### Phase 2.5 Neural Baseline 성능 (Validation Set, k=12, 1000 user sample)
+
+| Model | MAP@12 | HR@12 | NDCG@12 | MRR | vs Popularity |
+|-------|--------|-------|---------|-----|--------------|
+| **DCNv2 + LayerNorm (v16)** | **0.004515** | **0.053** | **0.009704** | **0.023861** | **119.3%** |
+| DeepFM (v1) | 0.001773 | 0.019 | 0.003334 | 0.005361 | 46.9% |
+
+**핵심 발견:**
+- DCNv2의 Cross Network (explicit high-order interaction)이 DeepFM의 FM (2nd-order)보다 254% 높은 MAP@12
+- DCNv2는 LayerNorm 없이는 loss 발산 (32B) — Cross Layer의 MoE residual 누적 문제
+- DeepFM은 logit 폭발 (loss 16K) + BCE-ranking 불일치로 Popularity 미달
+- 동일 메타데이터 피처에서 모델 아키텍처가 성능을 2.5x 차이나게 함
+- 전체 유저(366K) 평가는 미완료 (DCNv2 ~5시간 배치 필요)
 
 ### Phase 0 EDA 주요 발견
 
