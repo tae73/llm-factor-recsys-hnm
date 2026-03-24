@@ -150,14 +150,7 @@ class DeepFM(nnx.Module):
                 h = layer(h)
         dnn_out = self.dnn_output(h)
 
-        # Bound each component via tanh to prevent logit explosion
-        # Each ∈ [-1, 1], so logits ∈ [-3, 3] + bias — safe for BCE
-        logits = (
-            self.bias[...]
-            + jnp.tanh(first_order)
-            + jnp.tanh(fm_second)
-            + jnp.tanh(dnn_out)
-        )
+        logits = self.bias[...] + first_order + fm_second + dnn_out
         return logits.squeeze(-1)
 
     def __call__(self, x: DeepFMInput) -> jax.Array:

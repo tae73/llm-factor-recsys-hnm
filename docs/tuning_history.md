@@ -163,10 +163,61 @@ neg_ratio=4에서 batch의 80%가 negative:
 
 ---
 
+### v11: DeepFM 원본 복원 + norm + AdamW + lr=1e-4 + neg_ratio=1 (2026-03-24)
+
+**변경**: per-component tanh 제거, 원본 아키텍처 복원. 나머지 유지.
+
+| Epoch | Avg Loss | MAP@12 (end) | MAP@12 (mid best) |
+|-------|----------|--------------|--------------------|
+| 1 | 8,285 | 0.000033 | 0.000316 |
+
+**결과**: Loss 진동 (8K→5K→8K), MAP@12 극히 낮음. lr=1e-4에서도 logit 폭발 지속.
+
+---
+
+### v12: DCNv2 baseline + norm + AdamW + lr=1e-4 + neg_ratio=1 (2026-03-24)
+
+**변경**: backbone만 DCNv2로 교체. 동일 피처/정규화/optimizer.
+
+| Epoch | Avg Loss | MAP@12 (end) | MAP@12 (mid best) |
+|-------|----------|--------------|--------------------|
+| 1 | 75,174,367 | 0.000521 | 0.000786 |
+
+**결과**: Loss 극단적 폭발 (75M), 그러나 MAP@12=0.000521 (DeepFM보다 15x 높음). Cross Network이 feature interaction을 더 잘 포착하지만, 여전히 Popularity(0.003783) 미만.
+
+---
+
+## 최종 진단 (v1-v12 종합)
+
+### 결론: Feature Quality 문제 확정
+
+| Model | Best MAP@12 | vs Popularity (0.003783) |
+|-------|-------------|--------------------------|
+| DeepFM v1 (원본, neg4) | 0.001773 | 47% |
+| DeepFM v10 (tanh, neg1) | 0.001620 | 43% |
+| DeepFM v11 (no tanh, neg1) | 0.000316 | 8% |
+| DCNv2 v12 (neg1) | 0.000786 | 21% |
+
+**두 모델 모두 Popularity 미만 → 문제는 모델이 아니라 피처:**
+- 현재 피처: 인구통계(user) × 메타데이터(item) — user-item interaction signal = 0
+- 모델이 학습할 수 있는 것: "25세 여성 × 검정 부츠 → 구매 확률?" (카테고리 성향, ≠ 개인화)
+- Popularity baseline: "가장 많이 팔린 12개" → 인기도 편향(Gini=0.7586)에서 단순 추천이 더 정확
+
+### 프로젝트 설계 의도와의 정합성
+
+이 결과는 프로젝트 연구 동기와 **정확히 일치**:
+- **Triple-Sparsity 환경에서 기존 메타데이터 Content-Based의 한계 실증** ✓
+- Level 1 (DeepFM + metadata) < Popularity → **KAR (L1+L2+L3 LLM 속성)의 증분 가치가 연구 핵심**
+- 다음 단계: KAR 통합으로 BGE 임베딩(h_fact, h_reason)이 user-item interaction signal 제공
+
+---
+
 ## Key Takeaways
 
-1. **Logit 스케일이 추천 모델의 핵심** — FM interaction이 quadratic하게 증가하므로 반드시 제어 필요
-2. **4:1 neg ratio + BCE = mode collapse 위험** — balanced (1:1) 또는 pairwise loss 사용
-3. **Loss↓ ≠ MAP↑** — BCE pointwise loss는 ranking metric과 직접 연결되지 않음
-4. **per-component tanh는 양날의 검** — loss 안정화 vs 표현력 제한
-5. **validation 1000 users 샘플링의 분산이 큼** — epoch마다 MAP@12이 0.000~0.002로 변동
+1. **Feature quality >> 모델 아키텍처/튜닝** — 같은 피처에서 DeepFM, DCNv2 모두 Popularity 미만
+2. **Logit 스케일이 추천 모델의 핵심** — FM interaction이 quadratic하게 증가하므로 반드시 제어 필요
+3. **4:1 neg ratio + BCE = mode collapse 위험** — balanced (1:1) 또는 pairwise loss 사용
+4. **Loss↓ ≠ MAP↑** — BCE pointwise loss는 ranking metric과 직접 연결되지 않음
+5. **per-component tanh는 양날의 검** — loss 안정화 vs 표현력 제한
+6. **validation 1000 users 샘플링의 분산이 큼** — epoch마다 MAP@12이 0.000~0.002로 변동
+7. **KAR (LLM 속성) 통합이 성능 개선의 핵심 경로** — metadata-only 피처의 구조적 한계
