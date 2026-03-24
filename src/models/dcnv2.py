@@ -69,6 +69,9 @@ class CrossLayerV2(nnx.Module):
         # Gating network: Linear(d_input → n_experts)
         self.gate = nnx.Linear(d_input, n_experts, rngs=rngs)
 
+        # LayerNorm for numerical stability (prevents residual accumulation explosion)
+        self.layer_norm = nnx.LayerNorm(d_input, rngs=rngs)
+
     def __call__(self, x0: jax.Array, xl: jax.Array) -> jax.Array:
         """Forward: x_{l+1} = x0 ⊙ (MoE(x_l) + b) + x_l.
 
@@ -92,7 +95,8 @@ class CrossLayerV2(nnx.Module):
         expert_out = jnp.sum(gate_weights[:, :, None] * uvx, axis=1)  # (B, D)
 
         # Cross: x0 ⊙ (expert_out + bias) + xl (element-wise product + residual)
-        return x0 * (expert_out + self.bias[...]) + xl
+        out = x0 * (expert_out + self.bias[...]) + xl
+        return self.layer_norm(out)
 
 
 class DCNv2(nnx.Module):

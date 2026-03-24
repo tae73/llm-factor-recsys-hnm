@@ -906,7 +906,7 @@ def run_training(
     predictions = generate_predictions(
         model, target_users, user_features, item_features, user_to_idx, idx_to_item,
         backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
-        batch_size=4,  # 4 users × 105K items per batch (memory-safe)
+        batch_size=64,  # 64 users × 105K items per batch
     )
 
     pred_path = predictions_dir / f"{backbone_name}_{split}.json"
