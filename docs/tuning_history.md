@@ -193,10 +193,13 @@ neg_ratio=4에서 batch의 80%가 negative:
 
 | Model | Best MAP@12 | vs Popularity (0.003783) |
 |-------|-------------|--------------------------|
-| DeepFM v1 (원본, neg4) | 0.001773 | 47% |
+| **DeepFM v1 (원본, neg4)** | **0.001773** | **47%** |
 | DeepFM v10 (tanh, neg1) | 0.001620 | 43% |
 | DeepFM v11 (no tanh, neg1) | 0.000316 | 8% |
-| DCNv2 v12 (neg1) | 0.000786 | 21% |
+| DeepFM v13 (v1 재현) | 0.000281 (E1) | 학습 중단 — v1과 동일 패턴 |
+| DCNv2 v12 (neg1, lr=1e-4) | 0.000786 | 21% |
+| DCNv2 v14 (neg4, lr=1e-3) | 발산 (loss 32B) | Cross Network 불안정 |
+| DCNv2 v15 (neg4, lr=1e-4) | 발산 (loss 1.4B) | MoE residual 기하급수 증가 |
 
 **두 모델 모두 Popularity 미만 → 문제는 모델이 아니라 피처:**
 - 현재 피처: 인구통계(user) × 메타데이터(item) — user-item interaction signal = 0
@@ -221,3 +224,5 @@ neg_ratio=4에서 batch의 80%가 negative:
 5. **per-component tanh는 양날의 검** — loss 안정화 vs 표현력 제한
 6. **validation 1000 users 샘플링의 분산이 큼** — epoch마다 MAP@12이 0.000~0.002로 변동
 7. **KAR (LLM 속성) 통합이 성능 개선의 핵심 경로** — metadata-only 피처의 구조적 한계
+8. **DCNv2 Cross Network은 수치 불안정** — MoE + residual 3 layers로 logit 기하급수 증가 (DeepFM 대비 10,000x). LayerNorm 추가 필요
+9. **neg_ratio=4가 neg_ratio=1보다 실용적** — BCE에서 4:1이 mode collapse 위험 있지만, loss 크기를 억제하는 부수 효과로 MAP@12가 더 높음

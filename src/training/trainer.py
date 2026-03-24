@@ -153,17 +153,7 @@ def create_train_state(
             rngs=rngs,
         )
 
-    optimizer = nnx.Optimizer(
-        model,
-        optax.chain(
-            optax.clip_by_global_norm(1.0),
-            optax.adamw(
-                learning_rate=train_config.learning_rate,
-                weight_decay=1e-5,
-            ),
-        ),
-        wrt=nnx.Param,
-    )
+    optimizer = nnx.Optimizer(model, optax.adam(learning_rate=train_config.learning_rate), wrt=nnx.Param)
     return model, optimizer
 
 
@@ -703,14 +693,7 @@ def run_training(
         print(f"  Sequences: max_len={sequences.shape[1]}, "
               f"users_with_seq={int(np.sum(seq_lengths > 0)):,}")
 
-    # --- Normalize numerical features (z-score, in-memory) ---
-    for feat_dict, name in [(user_features, "user"), (item_features, "item")]:
-        num = feat_dict["numerical"]
-        mu = num.mean(axis=0, keepdims=True)
-        sigma = num.std(axis=0, keepdims=True) + 1e-8
-        feat_dict["numerical"] = ((num - mu) / sigma).astype(np.float32)
-        print(f"  {name} numerical normalized: mean≈{feat_dict['numerical'].mean():.4f}, "
-              f"std≈{feat_dict['numerical'].std():.4f}")
+    # Note: z-score normalization removed to match v1 baseline conditions
 
     print(f"  Users: {feature_meta['n_users']:,}")
     print(f"  Items: {feature_meta['n_items']:,}")
