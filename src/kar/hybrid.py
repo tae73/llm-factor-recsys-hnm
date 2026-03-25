@@ -77,6 +77,10 @@ class KARModel(nnx.Module):
         logits, _ = self.forward_with_intermediates(x)
         return logits
 
+    def predict_proba(self, x: KARInput) -> jax.Array:
+        """Inference: returns sigmoid probabilities (B,)."""
+        return jax.nn.sigmoid(self.__call__(x))
+
     def forward_with_intermediates(
         self, x: KARInput
     ) -> tuple[jax.Array, dict[str, jax.Array]]:

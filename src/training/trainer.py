@@ -481,6 +481,8 @@ def generate_predictions(
     sequences: np.ndarray | None = None,
     seq_lengths: np.ndarray | None = None,
     batch_size: int = 256,
+    item_embeddings: np.ndarray | None = None,
+    user_embeddings: np.ndarray | None = None,
 ) -> dict[str, list[str]]:
     """Generate top-K predictions for target users (batched for speed)."""
     spec = get_backbone(backbone_name)
@@ -491,6 +493,7 @@ def generate_predictions(
             model, target_user_ids, user_features, item_features,
             user_to_idx, idx_to_item, k,
             user_batch_size=batch_size, item_chunk_size=2048,
+            item_embeddings=item_embeddings, user_embeddings=user_embeddings,
         )
 
     # Per-user scoring (mid-epoch validation, graph/sequential models)
@@ -587,12 +590,17 @@ def _generate_predictions_chunked(
     k: int = 12,
     user_batch_size: int = 64,
     item_chunk_size: int = 2048,
+    item_embeddings: np.ndarray | None = None,
+    user_embeddings: np.ndarray | None = None,
 ) -> dict[str, list[str]]:
     """Chunked scoring: (user_batch × item_chunk) blocks to control memory.
 
     Instead of scoring all 105K items at once per user batch, scores items
     in chunks and merges top-K across chunks. Memory per step ≈ training batch.
+
+    For KAR models: pass item_embeddings/user_embeddings to construct KARInput.
     """
+    use_kar = item_embeddings is not None and user_embeddings is not None
     n_items = item_features["categorical"].shape[0]
     item_cat = item_features["categorical"]
     item_num = item_features["numerical"]
@@ -612,6 +620,11 @@ def _generate_predictions_chunked(
         u_cat = jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32)
         u_num = jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32)
 
+        # Pre-load user BGE embeddings for this batch (KAR only)
+        u_emb_batch = None
+        if use_kar:
+            u_emb_batch = jnp.array(user_embeddings[batch_idxs], dtype=jnp.float32)
+
         # Score items in chunks, collect all scores
         all_scores = []
         for ic_start in range(0, n_items, item_chunk_size):
@@ -627,10 +640,20 @@ def _generate_predictions_chunked(
             i_cat_tiled = jnp.tile(i_cat_chunk, (n_batch, 1))
             i_num_tiled = jnp.tile(i_num_chunk, (n_batch, 1))
 
-            inp = DeepFMInput(
+            base_input = DeepFMInput(
                 user_cat=u_cat_tiled, user_num=u_num_tiled,
                 item_cat=i_cat_tiled, item_num=i_num_tiled,
             )
+
+            if use_kar:
+                from src.kar.hybrid import KARInput
+                i_emb_chunk = jnp.array(item_embeddings[ic_start:ic_end], dtype=jnp.float32)
+                h_fact_tiled = jnp.tile(i_emb_chunk, (n_batch, 1))
+                h_reason_tiled = jnp.repeat(u_emb_batch, chunk_size, axis=0)
+                inp = KARInput(base_input=base_input, h_fact=h_fact_tiled, h_reason=h_reason_tiled)
+            else:
+                inp = base_input
+
             chunk_scores = model.predict_proba(inp)  # (n_batch * chunk_size,)
             all_scores.append(chunk_scores.reshape(n_batch, chunk_size))
 
