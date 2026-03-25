@@ -107,9 +107,9 @@
 - [x] DeepFM + LayerNorm 학습 — **MAP@12=0.004020** (best epoch 2), Popularity 돌파 (106%)
 - [x] LightGCN 시도 — OOM (1.4M node graph, 40GB MIG 초과)
 - [x] ReRank-Base (DeepFM→LightGBM) — MAP@12=0.000193 (Stage 1 recall 부족으로 저조)
-- [ ] DCNv2 전체 유저(366K) prediction 생성 + MAP@12 확정 (~5시간 배치)
-- [ ] DeepFM+LayerNorm 전체 유저(366K) prediction 생성 + MAP@12 확정 (~3시간 배치)
-- [ ] Level 1 baseline 결과 확정 (DeepFM vs DCNv2 비교 테이블)
+- [x] DeepFM+LayerNorm 전체 유저(413K) prediction — MAP@12=0.002941 (Popularity의 77.7%, ~2시간)
+- [x] DCNv2+LayerNorm 전체 유저(413K) prediction — MAP@12=0.003361 (Popularity의 88.9%, ~3시간)
+- [x] Level 1 baseline 결과 확정 — 두 모델 모두 전체 평가에서 Popularity(0.003783) 미달. 1000 sample validation은 25~27% 과대추정
 
 ### Phase 2.5b: GBDT Re-Ranker Baseline (2-stage)
 - [x] `src/config.py` — ReRankerConfig, ReRankerResult 추가
@@ -334,22 +334,30 @@ done
 | UserKNN (ALS) | 0.003036 | 0.033901 | 0.006319 | 0.012228 |
 | BPR-MF | 0.001308 | 0.016069 | 0.002839 | 0.004924 |
 
-### Phase 2.5 Neural Baseline 성능 (Validation Set, k=12, 1000 user sample)
+### Phase 2.5 Neural Baseline 성능 (Validation Set, k=12)
+
+**전체 유저 평가 (413K users):**
 
 | Model | MAP@12 | HR@12 | NDCG@12 | MRR | vs Popularity |
 |-------|--------|-------|---------|-----|--------------|
-| **DCNv2 + LayerNorm (v16)** | **0.004515** | **0.053** | **0.009704** | **0.023861** | **119.3%** |
-| DeepFM + LayerNorm | 0.004020 | 0.057 | 0.009398 | 0.018127 | 106.3% |
-| DeepFM v1 (원본) | 0.001773 | 0.019 | 0.003334 | 0.005361 | 46.9% |
-| ReRank-Base (DeepFM→GBDT) | 0.000193 | 0.005 | 0.000632 | 0.001408 | 5.1% |
-| LightGCN | OOM | — | — | — | 1.4M node graph 초과 |
+| **Popularity Global** | **0.003783** | **0.044994** | **0.008122** | **0.015481** | **100%** |
+| DCNv2 + LayerNorm | 0.003361 | 0.039356 | 0.007190 | 0.014660 | 88.9% |
+| DeepFM + LayerNorm | 0.002941 | 0.041318 | 0.006864 | 0.012362 | 77.7% |
+
+**1000 user sample vs 전체 비교:**
+
+| Model | 1000 sample MAP@12 | 전체 413K MAP@12 | 과대추정 |
+|-------|-------------------|-----------------|---------|
+| DCNv2 + LayerNorm | 0.004515 | 0.003361 | +34.3% |
+| DeepFM + LayerNorm | 0.004020 | 0.002941 | +36.7% |
 
 **핵심 발견:**
+- **전체 평가에서 두 모델 모두 Popularity 미달** — 1000 sample validation이 25~37% 과대추정
 - **LayerNorm이 두 모델 모두에서 핵심** — DeepFM 2.27x, DCNv2 ∞ (발산→정상) 향상
-- DCNv2(119%) > DeepFM(106%) — Cross Network의 high-order interaction이 FM 2nd-order보다 우수하지만 격차는 12%로 예상보다 작음
+- DCNv2(88.9%) > DeepFM(77.7%) — Cross Network이 FM보다 14% 우수
+- **메타데이터 피처만으로는 Popularity 미달** → KAR (L1+L2+L3 LLM 속성)의 증분 가치가 연구 핵심
 - ReRank-Base 실패 — Stage 1(DeepFM) recall 부족으로 GBDT re-ranking 무효
 - LightGCN — 1.4M 노드 그래프가 40GB MIG 초과, 실행 불가
-- 전체 유저(366K) 평가는 미완료 (DCNv2 ~5시간, DeepFM ~3시간 배치 필요)
 
 ### Phase 0 EDA 주요 발견
 
