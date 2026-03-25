@@ -122,7 +122,7 @@
 - [x] 단위 테스트 — test_reranker.py (~20 tests)
 - [x] ReRank-Base (DeepFM Stage1, 5K sample) — MAP@12=0.000193 (Stage 1 recall 부족)
 - [x] ReRank-Base (DCNv2 Stage1, 5K sample) — **MAP@12=0.004910** (Popularity 130%, DCNv2 단독 대비 +46%)
-- [ ] ReRank-Base 전체 유저 평가 — DCNv2 Stage1 top-100 후보 추출 필요 (~3~5시간 배치)
+- [x] ReRank-Base 전체 유저 평가 — **MAP@12=0.004055** (Popularity 107.2%, 전체 413K users, 3.2시간)
 - [ ] ReRank-Full (DCNv2 Stage1 + L1+L2+L3 속성) — KAR 실험 단계에서 진행
 
 ## Phase 3: 세그멘테이션 & 분석 (Week 8-10)

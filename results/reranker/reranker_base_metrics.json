@@ -3,62 +3,58 @@
   "stage1_backbone": "dcnv2",
   "top_k": 100,
   "n_features": 24,
-  "n_train_samples": 400000,
-  "n_val_samples": 100000,
+  "n_train_samples": 29349600,
+  "n_val_samples": 7337500,
   "best_iteration": 1,
-  "val_auc": 0.6775120585029448,
-  "map_at_12": 0.004909983399757209,
-  "hr_at_12": 0.0622,
-  "ndcg_at_12": 0.01112474064608423,
-  "mrr": 0.020082683982683983,
+  "val_auc": 0.7159272800264693,
+  "map_at_12": 0.004054511055699169,
+  "hr_at_12": 0.05578527602345239,
+  "ndcg_at_12": 0.009461828702117349,
+  "mrr": 0.017233645667345796,
   "top_features": [
     [
       "i_total_purchases",
-      8253137.0
-    ],
-    [
-      "i_product_type",
-      2237391.0
-    ],
-    [
-      "cross_price_ratio",
-      2202224.0
+      690384830.0
     ],
     [
       "i_colour",
-      1174602.0
+      111295904.0
     ],
     [
-      "u_avg_price",
-      1156520.0
+      "i_product_type",
+      90513996.0
+    ],
+    [
+      "cross_price_ratio",
+      69278180.0
     ],
     [
       "rank_position",
-      1083534.0
+      45640510.0
     ],
     [
-      "cross_recency_popularity",
-      621723.0
+      "i_index",
+      35341890.0
     ],
     [
-      "cross_age_section",
-      567013.0
-    ],
-    [
-      "u_n_unique_categories",
-      472432.0
+      "i_garment_group",
+      26597770.0
     ],
     [
       "i_section",
-      447248.0
+      23096750.0
     ],
     [
       "u_n_purchases",
-      419801.0
+      10544900.0
+    ],
+    [
+      "u_days_since_last",
+      7755180.0
     ],
     [
       "u_online_ratio",
-      209052.0
+      3584320.0
     ],
     [
       "stage1_score",
@@ -69,7 +65,15 @@
       0.0
     ],
     [
+      "u_avg_price",
+      0.0
+    ],
+    [
       "u_price_std",
+      0.0
+    ],
+    [
+      "u_n_unique_categories",
       0.0
     ],
     [
@@ -81,10 +85,6 @@
       0.0
     ],
     [
-      "u_days_since_last",
-      0.0
-    ],
-    [
       "u_age_group",
       0.0
     ],
@@ -93,5 +93,5 @@
       0.0
     ]
   ],
-  "total_time_seconds": 186.31805610656738
+  "total_time_seconds": 11610.97951412201
 }
