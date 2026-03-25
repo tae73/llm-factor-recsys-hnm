@@ -187,42 +187,82 @@ neg_ratio=4에서 batch의 80%가 negative:
 
 ---
 
-## 최종 진단 (v1-v12 종합)
+### v16: DCNv2 + LayerNorm (2026-03-24)
 
-### 결론: Feature Quality 문제 확정
+**변경**: CrossLayerV2 출력에 `self.layer_norm = nnx.LayerNorm(d_input)` 추가.
+**설정**: neg_ratio=4, lr=1e-3, Adam, batch=2048.
 
-| Model | Best MAP@12 | vs Popularity (0.003783) |
-|-------|-------------|--------------------------|
-| **DeepFM v1 (원본, neg4)** | **0.001773** | **47%** |
-| DeepFM v10 (tanh, neg1) | 0.001620 | 43% |
-| DeepFM v11 (no tanh, neg1) | 0.000316 | 8% |
-| DeepFM v13 (v1 재현) | 0.000281 (E1) | 학습 중단 — v1과 동일 패턴 |
-| DCNv2 v12 (neg1, lr=1e-4) | 0.000786 | 21% |
-| DCNv2 v14 (neg4, lr=1e-3) | 발산 (loss 32B) | Cross Network 불안정 |
-| DCNv2 v15 (neg4, lr=1e-4) | 발산 (loss 1.4B) | MoE residual 기하급수 증가 |
+| Epoch | Avg Loss | MAP@12 (1K sample) | HR@12 | NDCG@12 | MRR |
+|-------|----------|---------------------|-------|---------|-----|
+| 1 | 0.307 | 0.002923 | 0.041 | 0.006615 | 0.012775 |
+| 4 | 0.296 | 0.003278 | 0.055 | 0.008661 | 0.018643 |
+| 6 | 0.292 | 0.003859 | 0.049 | 0.008632 | 0.014955 |
+| **8** | **0.291** | **0.004515** | **0.053** | **0.009704** | **0.023861** |
 
-**두 모델 모두 Popularity 미만 → 문제는 모델이 아니라 피처:**
-- 현재 피처: 인구통계(user) × 메타데이터(item) — user-item interaction signal = 0
-- 모델이 학습할 수 있는 것: "25세 여성 × 검정 부츠 → 구매 확률?" (카테고리 성향, ≠ 개인화)
-- Popularity baseline: "가장 많이 팔린 12개" → 인기도 편향(Gini=0.7586)에서 단순 추천이 더 정확
+Early stop at epoch 11, best epoch 8. **1K sample에서 Popularity(0.003783) 돌파 (119%).**
+
+---
+
+### v17: DeepFM + LayerNorm (2026-03-24)
+
+**변경**: FM output과 DNN output에 각각 `nnx.LayerNorm(1)` 추가.
+**설정**: neg_ratio=4, lr=1e-3, Adam, batch=2048.
+
+| Epoch | Avg Loss | MAP@12 (1K sample) | HR@12 | NDCG@12 | MRR |
+|-------|----------|---------------------|-------|---------|-----|
+| 1 | 0.654 | 0.001948 | 0.045 | 0.005998 | 0.010957 |
+| **2** | **0.368** | **0.004020** | **0.057** | **0.009398** | **0.018127** |
+| 3 | 0.368 | 0.003244 | 0.046 | 0.007890 | 0.015001 |
+
+Early stop at epoch 5, best epoch 2. **1K sample에서 Popularity 돌파 (106%).**
+
+---
+
+## 전체 유저 평가 (413,408 users, 2026-03-25)
+
+**1000 sample validation은 25~37% 과대추정.** 전체 유저 평가 결과:
+
+| Model | MAP@12 | HR@12 | NDCG@12 | MRR | vs Popularity |
+|-------|--------|-------|---------|-----|--------------|
+| **Popularity Global** | **0.003783** | **0.044994** | **0.008122** | **0.015481** | **100%** |
+| DCNv2 + LayerNorm (v16) | 0.003361 | 0.039356 | 0.007190 | 0.014660 | 88.9% |
+| DeepFM + LayerNorm (v17) | 0.002941 | 0.041318 | 0.006864 | 0.012362 | 77.7% |
+| DeepFM v1 (원본) | 0.001773 | 0.019 | 0.003334 | 0.005361 | 46.9% |
+
+**1K sample vs 전체 비교:**
+
+| Model | 1K sample | 전체 413K | 과대추정 |
+|-------|----------|----------|---------|
+| DCNv2 + LayerNorm | 0.004515 | 0.003361 | +34.3% |
+| DeepFM + LayerNorm | 0.004020 | 0.002941 | +36.7% |
+
+---
+
+## 최종 진단 (v1-v17 종합)
+
+### 결론
+
+1. **LayerNorm이 핵심 해결책** — DeepFM v1→v17: 0.001773→0.002941 (1.66x), DCNv2: 발산→0.003361 (∞x)
+2. **전체 평가에서 두 모델 모두 Popularity 미달** — 메타데이터 피처만으로는 개인화 불가
+3. **DCNv2(88.9%) > DeepFM(77.7%)** — Cross Network의 high-order interaction이 14% 우수
+4. **1000 sample validation의 과대추정이 심각** — 25~37% 과대추정, 전체 평가 필수
 
 ### 프로젝트 설계 의도와의 정합성
 
 이 결과는 프로젝트 연구 동기와 **정확히 일치**:
 - **Triple-Sparsity 환경에서 기존 메타데이터 Content-Based의 한계 실증** ✓
-- Level 1 (DeepFM + metadata) < Popularity → **KAR (L1+L2+L3 LLM 속성)의 증분 가치가 연구 핵심**
+- Level 1 (DeepFM/DCNv2 + metadata) < Popularity → **KAR (L1+L2+L3 LLM 속성)의 증분 가치가 연구 핵심**
 - 다음 단계: KAR 통합으로 BGE 임베딩(h_fact, h_reason)이 user-item interaction signal 제공
 
 ---
 
 ## Key Takeaways
 
-1. **Feature quality >> 모델 아키텍처/튜닝** — 같은 피처에서 DeepFM, DCNv2 모두 Popularity 미만
-2. **Logit 스케일이 추천 모델의 핵심** — FM interaction이 quadratic하게 증가하므로 반드시 제어 필요
-3. **4:1 neg ratio + BCE = mode collapse 위험** — balanced (1:1) 또는 pairwise loss 사용
-4. **Loss↓ ≠ MAP↑** — BCE pointwise loss는 ranking metric과 직접 연결되지 않음
-5. **per-component tanh는 양날의 검** — loss 안정화 vs 표현력 제한
-6. **validation 1000 users 샘플링의 분산이 큼** — epoch마다 MAP@12이 0.000~0.002로 변동
-7. **KAR (LLM 속성) 통합이 성능 개선의 핵심 경로** — metadata-only 피처의 구조적 한계
-8. **DCNv2 Cross Network은 수치 불안정** — MoE + residual 3 layers로 logit 기하급수 증가 (DeepFM 대비 10,000x). LayerNorm 추가 필요
-9. **neg_ratio=4가 neg_ratio=1보다 실용적** — BCE에서 4:1이 mode collapse 위험 있지만, loss 크기를 억제하는 부수 효과로 MAP@12가 더 높음
+1. **LayerNorm이 추천 모델 안정화의 핵심** — FM/Cross Network 모두 logit 폭발 방지에 필수
+2. **전체 평가에서 메타데이터 피처만으로는 Popularity 미달** — 개인화 시그널(KAR) 필요
+3. **1000 sample validation은 25~37% 과대추정** — 전체 유저 평가 필수
+4. **Logit 스케일 제어** — FM quadratic 증가, Cross Network residual 누적 반드시 정규화
+5. **neg_ratio=4가 neg_ratio=1보다 실용적** — BCE에서 4:1이 loss 크기 억제 부수 효과
+6. **Loss↓ ≠ MAP↑** — BCE pointwise loss는 ranking metric과 직접 연결되지 않음
+7. **DCNv2 > DeepFM** (88.9% vs 77.7%) — high-order interaction 학습이 14% 우수
+8. **KAR (LLM 속성) 통합이 성능 개선의 핵심 경로** — metadata-only 피처의 구조적 한계
