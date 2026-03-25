@@ -1,0 +1,97 @@
+{
+  "mode": "base",
+  "stage1_backbone": "dcnv2",
+  "top_k": 100,
+  "n_features": 24,
+  "n_train_samples": 400000,
+  "n_val_samples": 100000,
+  "best_iteration": 1,
+  "val_auc": 0.6775120585029448,
+  "map_at_12": 0.004909983399757209,
+  "hr_at_12": 0.0622,
+  "ndcg_at_12": 0.01112474064608423,
+  "mrr": 0.020082683982683983,
+  "top_features": [
+    [
+      "i_total_purchases",
+      8253137.0
+    ],
+    [
+      "i_product_type",
+      2237391.0
+    ],
+    [
+      "cross_price_ratio",
+      2202224.0
+    ],
+    [
+      "i_colour",
+      1174602.0
+    ],
+    [
+      "u_avg_price",
+      1156520.0
+    ],
+    [
+      "rank_position",
+      1083534.0
+    ],
+    [
+      "cross_recency_popularity",
+      621723.0
+    ],
+    [
+      "cross_age_section",
+      567013.0
+    ],
+    [
+      "u_n_unique_categories",
+      472432.0
+    ],
+    [
+      "i_section",
+      447248.0
+    ],
+    [
+      "u_n_purchases",
+      419801.0
+    ],
+    [
+      "u_online_ratio",
+      209052.0
+    ],
+    [
+      "stage1_score",
+      0.0
+    ],
+    [
+      "gap_to_rank1",
+      0.0
+    ],
+    [
+      "u_price_std",
+      0.0
+    ],
+    [
+      "u_n_unique_colors",
+      0.0
+    ],
+    [
+      "u_days_since_first",
+      0.0
+    ],
+    [
+      "u_days_since_last",
+      0.0
+    ],
+    [
+      "u_age_group",
+      0.0
+    ],
+    [
+      "u_club_status",
+      0.0
+    ]
+  ],
+  "total_time_seconds": 186.31805610656738
+}
