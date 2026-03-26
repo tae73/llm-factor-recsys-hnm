@@ -438,8 +438,8 @@ class KARConfig(NamedTuple):
     align_weight: float = 0.1
     diversity_weight: float = 0.01
     stage1_epochs: int = 20  # Backbone pre-train (BCE only, with early stopping)
-    stage2_epochs: int = 5  # Expert adaptor (align+div, backbone frozen)
-    stage3_epochs: int = 3  # End-to-end (BCE+align+div)
+    stage2_epochs: int = 10  # Expert adaptor (align+div, backbone frozen, with early stopping)
+    stage3_epochs: int = 10  # End-to-end (BCE+align+div, with early stopping)
     stage3_lr_factor: float = 0.1  # LR multiplier for stage 3
 
 

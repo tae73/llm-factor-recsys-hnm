@@ -1573,8 +1573,8 @@ def run_kar_training(
     _load_model_state(kar_model, model_dir / f"kar_{backbone_name}_s1_best")
     print(f"  Loaded best S1 model (MAP@12={best_s1_map:.6f})")
 
-    # ===== Stage 2: Expert Adaptor (backbone frozen) =====
-    print(f"\n[kar-train] === Stage 2: Expert Adaptor ({kar_config.stage2_epochs} epochs) ===")
+    # ===== Stage 2: Expert Adaptor (backbone frozen, with early stopping) =====
+    print(f"\n[kar-train] === Stage 2: Expert Adaptor (max {kar_config.stage2_epochs} epochs) ===")
     # Recreate optimizer for expert params only
     optimizer = nnx.Optimizer(
         kar_model, optax.adam(learning_rate=train_config.learning_rate), wrt=nnx.Param
@@ -1582,6 +1582,8 @@ def run_kar_training(
     step_fn = make_kar_train_step_stage2(
         backbone_name, kar_config.align_weight, kar_config.diversity_weight
     )
+    best_s2_map = 0.0
+    s2_patience = 0
 
     for epoch in range(kar_config.stage2_epochs):
         kar_model.train()
@@ -1605,6 +1607,40 @@ def run_kar_training(
                 print(f"  [S2 step {global_step:,}] loss={np.mean(epoch_losses[-500:]):.6f}")
 
         print(f"  [S2 epoch {epoch+1}] avg_loss={np.mean(epoch_losses):.6f}")
+
+        # Stage 2 validation + early stopping
+        gt_path_s2 = data_dir / f"{split}_ground_truth.json"
+        ground_truth_s2 = json.loads(gt_path_s2.read_text())
+        rng_s2 = np.random.default_rng(train_config.random_seed + epoch)
+        valid_s2 = [u for u in ground_truth_s2 if u in user_to_idx]
+        sample_s2 = rng_s2.choice(valid_s2, size=min(train_config.val_sample_users, len(valid_s2)), replace=False).tolist()
+        s2_preds: dict[str, list[str]] = {}
+        for uid in sample_s2:
+            u_idx = user_to_idx[uid]
+            top_items = score_full_catalog_kar(
+                kar_model, u_idx, user_features, item_features,
+                item_emb, user_emb, k=12, backbone_name=backbone_name,
+                sequences=sequences, seq_lengths=seq_lengths,
+            )
+            s2_preds[uid] = [idx_to_item[i] for i in top_items]
+        s2_gt = {u: ground_truth_s2[u] for u in sample_s2}
+        s2_result = evaluate(s2_preds, s2_gt, EvalConfig(k=12))
+        s2_val = {"map_at_12": s2_result.map_at_k, "hr_at_12": s2_result.hr_at_k}
+        print(f"  S2 MAP@12={s2_val['map_at_12']:.6f} HR@12={s2_val['hr_at_12']:.6f}")
+        if s2_val["map_at_12"] > best_s2_map:
+            best_s2_map = s2_val["map_at_12"]
+            s2_patience = 0
+            _save_model_state(kar_model, model_dir / f"kar_{backbone_name}_s2_best")
+            print(f"  *** S2 best MAP@12: {best_s2_map:.6f} ***")
+        else:
+            s2_patience += 1
+            if s2_patience >= train_config.patience:
+                print(f"  S2 early stopping at epoch {epoch+1}")
+                break
+
+    # Load best S2 model before Stage 3
+    _load_model_state(kar_model, model_dir / f"kar_{backbone_name}_s2_best")
+    print(f"  Loaded best S2 model (MAP@12={best_s2_map:.6f})")
 
     # ===== Stage 3: End-to-End =====
     stage3_lr = train_config.learning_rate * kar_config.stage3_lr_factor
