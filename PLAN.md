@@ -180,7 +180,12 @@
 - [x] KAR Config YAML — `configs/kar/default.yaml`
 - [x] 단위 테스트 72개 — `tests/unit/test_kar/` (expert 10, gating 17, fusion 15, hybrid 14, losses 8, prestore 4, backbone_embed 5) ALL PASS
 - [x] 기존 테스트 무파괴 확인 — 199 tests ALL PASS (72 new + 100 existing backbone + 21 features + 6 distributed)
-- [ ] 첫 End-to-End 학습 실험 (DeepFM+KAR, L1+L2+L3) ← **서버에서 진행**
+- [x] KAR v1 (DCNv2+KAR, Stage1=2ep 고정) — 1K sample MAP@12=0.004877, 전체 0.003273 (DCNv2 단독보다 낮음)
+- [x] Stage 1 early stopping 추가 — max 20ep + patience 3, best S1 model 로드
+- [x] Stage 2 early stopping 추가 — max 10ep + patience 3, best S2 model 로드 (코드 완료, 다음 실행부터 적용)
+- [x] KAR v2 학습 중 (Stage1 ES 적용) — S1 best MAP@12=0.005462 (ep2), S3 best MAP@12=0.005265 (ep5)
+- [ ] KAR v2 전체 유저 prediction + MAP@12 확정
+- [ ] KAR v3: Stage 2 early stopping 적용으로 재학습 — S2에서 expert 과적합 방지 후 성능 변화 확인
 
 ### 서버 실행 커맨드 (Phase 4 마무리)
 
