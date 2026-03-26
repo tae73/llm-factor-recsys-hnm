@@ -324,7 +324,7 @@ class TrainConfig(NamedTuple):
     max_epochs: int = 50
     patience: int = 3
     val_every_n_steps: int = 5000
-    val_sample_users: int = 1000
+    val_sample_users: int = 5000
     random_seed: int = 42
     log_every_n_steps: int = 500
     use_wandb: bool = True
