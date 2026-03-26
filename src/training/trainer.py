@@ -1539,13 +1539,24 @@ def run_kar_training(
 
         print(f"  [S1 epoch {epoch+1}] avg_loss={np.mean(epoch_losses):.6f}")
 
-        # Stage 1 validation + early stopping
-        s1_val = validate_sample(
-            kar_model, data_dir, features_dir, split,
-            train_config.val_sample_users, user_features, item_features,
-            user_to_idx, idx_to_item, k=12, seed=train_config.random_seed + epoch,
-            backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
-        )
+        # Stage 1 validation + early stopping (KAR per-user scoring)
+        gt_path = data_dir / f"{split}_ground_truth.json"
+        ground_truth_s1 = json.loads(gt_path.read_text())
+        rng_s1 = np.random.default_rng(train_config.random_seed + epoch)
+        valid_s1 = [u for u in ground_truth_s1 if u in user_to_idx]
+        sample_s1 = rng_s1.choice(valid_s1, size=min(train_config.val_sample_users, len(valid_s1)), replace=False).tolist()
+        s1_preds: dict[str, list[str]] = {}
+        for uid in sample_s1:
+            u_idx = user_to_idx[uid]
+            top_items = score_full_catalog_kar(
+                kar_model, u_idx, user_features, item_features,
+                item_emb, user_emb, k=12, backbone_name=backbone_name,
+                sequences=sequences, seq_lengths=seq_lengths,
+            )
+            s1_preds[uid] = [idx_to_item[i] for i in top_items]
+        s1_gt = {u: ground_truth_s1[u] for u in sample_s1}
+        s1_result = evaluate(s1_preds, s1_gt, EvalConfig(k=12))
+        s1_val = {"map_at_12": s1_result.map_at_k, "hr_at_12": s1_result.hr_at_k}
         print(f"  S1 MAP@12={s1_val['map_at_12']:.6f} HR@12={s1_val['hr_at_12']:.6f}")
         if s1_val["map_at_12"] > best_s1_map:
             best_s1_map = s1_val["map_at_12"]
