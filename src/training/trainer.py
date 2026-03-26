@@ -1510,9 +1510,11 @@ def run_kar_training(
         except Exception:
             wandb_run = None
 
-    # ===== Stage 1: Backbone Pre-train =====
-    print(f"\n[kar-train] === Stage 1: Backbone Pre-train ({kar_config.stage1_epochs} epochs) ===")
+    # ===== Stage 1: Backbone Pre-train (with early stopping) =====
+    print(f"\n[kar-train] === Stage 1: Backbone Pre-train (max {kar_config.stage1_epochs} epochs) ===")
     step_fn = make_kar_train_step_stage1(backbone_name)
+    best_s1_map = 0.0
+    s1_patience = 0
 
     for epoch in range(kar_config.stage1_epochs):
         kar_model.train()
@@ -1536,6 +1538,29 @@ def run_kar_training(
                 print(f"  [S1 step {global_step:,}] loss={np.mean(epoch_losses[-500:]):.6f}")
 
         print(f"  [S1 epoch {epoch+1}] avg_loss={np.mean(epoch_losses):.6f}")
+
+        # Stage 1 validation + early stopping
+        s1_val = validate_sample(
+            kar_model, data_dir, features_dir, split,
+            train_config.val_sample_users, user_features, item_features,
+            user_to_idx, idx_to_item, k=12, seed=train_config.random_seed + epoch,
+            backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
+        )
+        print(f"  S1 MAP@12={s1_val['map_at_12']:.6f} HR@12={s1_val['hr_at_12']:.6f}")
+        if s1_val["map_at_12"] > best_s1_map:
+            best_s1_map = s1_val["map_at_12"]
+            s1_patience = 0
+            _save_model_state(kar_model, model_dir / f"kar_{backbone_name}_s1_best")
+            print(f"  *** S1 best MAP@12: {best_s1_map:.6f} ***")
+        else:
+            s1_patience += 1
+            if s1_patience >= train_config.patience:
+                print(f"  S1 early stopping at epoch {epoch+1}")
+                break
+
+    # Load best S1 model before Stage 2
+    _load_model_state(kar_model, model_dir / f"kar_{backbone_name}_s1_best")
+    print(f"  Loaded best S1 model (MAP@12={best_s1_map:.6f})")
 
     # ===== Stage 2: Expert Adaptor (backbone frozen) =====
     print(f"\n[kar-train] === Stage 2: Expert Adaptor ({kar_config.stage2_epochs} epochs) ===")
