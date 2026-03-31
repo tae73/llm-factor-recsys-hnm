@@ -592,6 +592,8 @@ def _generate_predictions_chunked(
     item_chunk_size: int = 2048,
     item_embeddings: np.ndarray | None = None,
     user_embeddings: np.ndarray | None = None,
+    output_path: Path | None = None,
+    save_every: int = 50,
 ) -> dict[str, list[str]]:
     """Chunked scoring: (user_batch × item_chunk) blocks to control memory.
 
@@ -599,17 +601,30 @@ def _generate_predictions_chunked(
     in chunks and merges top-K across chunks. Memory per step ≈ training batch.
 
     For KAR models: pass item_embeddings/user_embeddings to construct KARInput.
+    If output_path is set, saves incrementally and supports resume from partial results.
     """
     use_kar = item_embeddings is not None and user_embeddings is not None
     n_items = item_features["categorical"].shape[0]
     item_cat = item_features["categorical"]
     item_num = item_features["numerical"]
 
-    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
+    # Resume: load existing predictions and skip done users
+    done_uids: set[str] = set()
+    if output_path and output_path.exists():
+        existing = json.loads(output_path.read_text())
+        done_uids = {uid for uid, preds in existing.items() if preds}
+        print(f"  Resuming: {len(done_uids):,} users already done")
+    else:
+        existing = {}
+
+    valid_pairs = [
+        (uid, user_to_idx[uid]) for uid in target_user_ids
+        if uid in user_to_idx and uid not in done_uids
+    ]
     invalid_users = {uid for uid in target_user_ids if uid not in user_to_idx}
 
     model.eval()
-    predictions: dict[str, list[str]] = {uid: [] for uid in invalid_users}
+    predictions: dict[str, list[str]] = {**existing, **{uid: [] for uid in invalid_users}}
 
     for ub_start in range(0, len(valid_pairs), user_batch_size):
         batch_pairs = valid_pairs[ub_start:ub_start + user_batch_size]
@@ -665,9 +680,20 @@ def _generate_predictions_chunked(
         for i, uid in enumerate(batch_uids):
             predictions[uid] = [idx_to_item[int(idx)] for idx in top_k_np[i]]
 
-        if (ub_start // user_batch_size) % 10 == 0:
+        batch_idx = ub_start // user_batch_size
+        if batch_idx % 10 == 0:
             done = ub_start + n_batch
-            print(f"  Predictions: {done:,}/{len(valid_pairs):,} users")
+            total_done = done + len(done_uids)
+            total_target = len(valid_pairs) + len(done_uids)
+            print(f"  Predictions: {total_done:,}/{total_target:,} users")
+
+        # Incremental save
+        if output_path and batch_idx > 0 and batch_idx % save_every == 0:
+            output_path.write_text(json.dumps(predictions))
+
+    # Final save
+    if output_path:
+        output_path.write_text(json.dumps(predictions))
 
     model.train()
     return predictions
