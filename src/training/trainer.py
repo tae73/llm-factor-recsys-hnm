@@ -1316,7 +1316,7 @@ def make_kar_train_step_stage2(
                 intermediates["e_reason"], jax.lax.stop_gradient(x_user_proj),
                 align_weight=align_weight,
                 diversity_weight=diversity_weight,
-                include_rec_loss=False,
+                include_rec_loss=True,
             )
             return total
 

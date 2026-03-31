@@ -35,6 +35,7 @@ class Expert(nnx.Module):
             in_dim = config.d_hidden
         layers.append(nnx.Linear(in_dim, config.d_rec, rngs=rngs))
         self.layers = nnx.List(layers)
+        self.output_norm = nnx.LayerNorm(config.d_rec, rngs=rngs)
 
     def __call__(self, h: jax.Array) -> jax.Array:
         """Forward pass.
@@ -54,4 +55,4 @@ class Expert(nnx.Module):
                     x = nnx.relu(x)
             elif isinstance(layer, nnx.Dropout):
                 x = layer(x)
-        return x
+        return self.output_norm(x)
