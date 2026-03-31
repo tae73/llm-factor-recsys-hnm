@@ -68,6 +68,10 @@ def main(
     min_child_samples: int = typer.Option(20, help="Min samples per leaf"),
     subsample: float = typer.Option(0.8, help="Row subsampling ratio"),
     colsample_bytree: float = typer.Option(0.8, help="Column subsampling ratio"),
+    # --- Candidate sources ---
+    candidate_sources: str = typer.Option(
+        "stage1", help="Comma-separated sources: stage1,repurchase,age_pop,recency"
+    ),
     # --- Misc ---
     random_seed: int = typer.Option(42, help="Random seed"),
     no_wandb: bool = typer.Option(False, help="Disable W&B logging"),
@@ -140,11 +144,13 @@ def main(
 
     print(f"  Target users: {len(target_user_ids):,}")
 
-    # --- Stage 1: Extract candidates ---
-    print("\n[2/6] Stage 1 candidate extraction...")
+    # --- Stage 1+Multi-source: Extract candidates ---
+    sources_list = [s.strip() for s in candidate_sources.split(",")]
+    print(f"\n[2/6] Candidate extraction (sources: {sources_list})...")
     candidates_dir = output_dir / "candidates"
     candidates_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = candidates_dir / f"{stage1_backbone}_{split}.npz"
+    cache_suffix = "_".join(sources_list)
+    cache_path = candidates_dir / f"{stage1_backbone}_{cache_suffix}_{split}.npz"
 
     if cache_candidates and cache_path.exists():
         print(f"  Loading cached candidates from {cache_path}")
@@ -155,31 +161,81 @@ def main(
             "candidate_scores": cached["candidate_scores"],
         }
     else:
-        # Load Stage 1 model
-        from src.config import DeepFMConfig, DCNv2Config
+        import duckdb
+        from src.features.candidate_generation import (
+            extract_repurchase_candidates,
+            extract_age_popularity_candidates,
+            extract_recency_candidates,
+            blend_candidates,
+        )
 
-        if stage1_backbone == "deepfm":
-            from src.config import DeepFMConfig
-            model_config = DeepFMConfig()
-        elif stage1_backbone == "dcnv2":
-            from src.config import DCNv2Config
-            model_config = DCNv2Config()
+        all_sources = []
+        con = duckdb.connect()
+        train_path = data_dir / "train_transactions.parquet"
+        articles_path = data_dir / "articles.parquet"
+        customers_path = data_dir / "customers.parquet"
+
+        # Stage 1 model candidates
+        if "stage1" in sources_list:
+            from src.config import DeepFMConfig, DCNv2Config, TrainConfig
+
+            if stage1_backbone == "deepfm":
+                model_config = DeepFMConfig()
+            elif stage1_backbone == "dcnv2":
+                model_config = DCNv2Config()
+            else:
+                raise ValueError(f"Unsupported stage1_backbone: {stage1_backbone}")
+
+            train_config = TrainConfig(random_seed=random_seed)
+            model, _ = create_train_state(
+                stage1_backbone, model_config, train_config, feature_meta, features_dir
+            )
+            model_checkpoint = stage1_model_dir / f"{stage1_backbone}_best"
+            _load_model_state(model, model_checkpoint)
+            print(f"  [stage1] Loaded model from {model_checkpoint}")
+
+            s1_cands = extract_stage1_candidates(
+                model, target_user_ids, user_features, item_features,
+                user_to_idx, top_k=top_k, batch_size=4,
+            )
+            all_sources.append(s1_cands)
+            print(f"  [stage1] {s1_cands['user_indices'].shape[0]:,} users")
+
+        # Repurchase candidates
+        if "repurchase" in sources_list:
+            rep_cands = extract_repurchase_candidates(
+                con, train_path, articles_path,
+                target_user_ids, user_to_idx, item_to_idx, top_k=50,
+            )
+            all_sources.append(rep_cands)
+            print(f"  [repurchase] {rep_cands['user_indices'].shape[0]:,} users")
+
+        # Age-group popularity candidates
+        if "age_pop" in sources_list:
+            age_cands = extract_age_popularity_candidates(
+                con, train_path, customers_path,
+                target_user_ids, user_to_idx, item_to_idx, top_k=50,
+            )
+            all_sources.append(age_cands)
+            print(f"  [age_pop] {age_cands['user_indices'].shape[0]:,} users")
+
+        # Recency candidates
+        if "recency" in sources_list:
+            rec_cands = extract_recency_candidates(
+                con, train_path,
+                target_user_ids, user_to_idx, item_to_idx,
+                window_days=14, top_k=50,
+            )
+            all_sources.append(rec_cands)
+            print(f"  [recency] {rec_cands['user_indices'].shape[0]:,} users")
+
+        con.close()
+
+        if len(all_sources) == 1:
+            candidates = all_sources[0]
         else:
-            raise ValueError(f"Unsupported stage1_backbone: {stage1_backbone}")
-
-        from src.config import TrainConfig
-        train_config = TrainConfig(random_seed=random_seed)
-        model, _ = create_train_state(
-            stage1_backbone, model_config, train_config, feature_meta, features_dir
-        )
-        model_checkpoint = stage1_model_dir / f"{stage1_backbone}_best"
-        _load_model_state(model, model_checkpoint)
-        print(f"  Loaded Stage 1 model from {model_checkpoint}")
-
-        candidates = extract_stage1_candidates(
-            model, target_user_ids, user_features, item_features,
-            user_to_idx, top_k=top_k, batch_size=4,
-        )
+            candidates = blend_candidates(all_sources, top_k=top_k)
+            print(f"  Blended {len(all_sources)} sources → top-{top_k}")
 
         if cache_candidates:
             np.savez_compressed(cache_path, **candidates)
@@ -223,6 +279,25 @@ def main(
                 item_bge, user_bge = build_aligned_embeddings(features_dir, embeddings_dir)
                 print(f"  BGE embeddings: items {item_bge.shape}, users {user_bge.shape}")
 
+    # --- Build interaction data (for user-item features) ---
+    interaction_data = None
+    item_categories = None
+    if any(s in sources_list for s in ["repurchase", "age_pop", "recency"]) or len(sources_list) > 1:
+        import duckdb as _ddb
+        from src.features.candidate_generation import build_interaction_data
+        _con = _ddb.connect()
+        train_path_int = data_dir / "train_transactions.parquet"
+        articles_path_int = data_dir / "articles.parquet"
+        interaction_data = build_interaction_data(_con, train_path_int, articles_path_int)
+        # Build item→category mapping
+        _cat_df = _con.execute(f"""
+            SELECT CAST(article_id AS VARCHAR) AS article_id, product_type_name
+            FROM read_parquet('{articles_path_int}')
+        """).fetchdf()
+        item_categories = dict(zip(_cat_df["article_id"], _cat_df["product_type_name"]))
+        _con.close()
+        print(f"  Interaction data: {len(interaction_data):,} users")
+
     X, feature_names = build_reranker_features(
         candidates["user_indices"],
         candidates["candidate_indices"],
@@ -230,6 +305,10 @@ def main(
         user_features, item_features,
         item_attributes, attribute_names,
         user_bge, item_bge,
+        interaction_data=interaction_data,
+        idx_to_user=idx_to_user,
+        idx_to_item=idx_to_item,
+        item_categories=item_categories,
     )
     y = build_reranker_labels(
         candidates["user_indices"],

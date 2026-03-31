@@ -70,24 +70,38 @@ python scripts/train.py \
     --no-wandb
 
 # 3f. GBDT Re-Ranker (2-stage baseline)
-# Base mode (score + user/item features only)
+# Base mode — single source (DCNv2 Stage 1 only)
 python scripts/train_reranker.py \
     --stage1-model-dir results/models \
-    --stage1-backbone deepfm \
+    --stage1-backbone dcnv2 \
     --data-dir data/processed \
     --features-dir data/features \
     --output-dir results/reranker \
     --mode base --no-wandb
+
+# Base mode — multi-source (repurchase + age popularity + recency + Stage 1)
+python scripts/train_reranker.py \
+    --stage1-model-dir results/models \
+    --stage1-backbone dcnv2 \
+    --data-dir data/processed \
+    --features-dir data/features \
+    --output-dir results/reranker \
+    --mode base \
+    --candidate-sources "stage1,repurchase,age_pop,recency" \
+    --no-wandb
+
 # Full mode (Base + L1/L2/L3 attributes + BGE similarity)
 python scripts/train_reranker.py \
     --stage1-model-dir results/models \
-    --stage1-backbone deepfm \
+    --stage1-backbone dcnv2 \
     --data-dir data/processed \
     --features-dir data/features \
     --fk-dir data/knowledge/factual \
     --embeddings-dir data/embeddings \
     --output-dir results/reranker \
-    --mode full --no-wandb
+    --mode full \
+    --candidate-sources "stage1,repurchase,age_pop,recency" \
+    --no-wandb
 
 # 3g. Pre-store expert outputs for serving
 python scripts/prestore.py \

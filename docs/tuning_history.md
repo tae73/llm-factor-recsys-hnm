@@ -256,6 +256,26 @@ Early stop at epoch 5, best epoch 2. **1K sample에서 Popularity 돌파 (106%).
 
 ---
 
+## Phase 4b: 다중 후보 생성 + 상호작용 피처 (구현 완료, 실험 대기)
+
+**Kaggle 상위 솔루션 분석 기반 개선:**
+- 단일 모델(DCNv2) 후보 → 다중 소스 후보 (재구매 + 연령대 인기 + 최근 인기 + Stage 1)
+- 메타데이터 피처 21D → + 유저-아이템 상호작용 피처 6D
+
+**신규 후보 소스 (`src/features/candidate_generation.py`):**
+- `extract_repurchase_candidates()`: 과거 구매 아이템 + 같은 product_code SKU
+- `extract_age_popularity_candidates()`: 연령대별 인기 아이템
+- `extract_recency_candidates()`: 최근 14일 인기 아이템
+- `blend_candidates()`: 다중 소스 합집합 → top-K
+
+**신규 상호작용 피처 (`src/features/reranker_features.py`):**
+- `has_bought_before`, `purchase_count`, `days_since_item_purchase`
+- `has_bought_category`, `category_purchase_count`, `user_item_price_ratio`
+
+**CLI**: `--candidate-sources "stage1,repurchase,age_pop,recency"`
+
+---
+
 ## Key Takeaways
 
 1. **LayerNorm이 추천 모델 안정화의 핵심** — FM/Cross Network 모두 logit 폭발 방지에 필수
