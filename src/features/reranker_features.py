@@ -320,6 +320,10 @@ def build_reranker_features(
     attribute_names: list[str] | None = None,
     user_bge: np.ndarray | None = None,
     item_bge: np.ndarray | None = None,
+    interaction_data: dict | None = None,
+    idx_to_user: dict[int, str] | None = None,
+    idx_to_item: dict[int, str] | None = None,
+    item_categories: dict[str, str] | None = None,
 ) -> tuple[np.ndarray, list[str]]:
     """Build feature matrix for all user×candidate pairs.
 
@@ -401,7 +405,50 @@ def build_reranker_features(
     blocks.append(np.column_stack([cross_age_section, price_ratio, recency_x_pop]))
     names.extend(["cross_age_section", "cross_price_ratio", "cross_recency_popularity"])
 
-    # --- 8. BGE similarity (1D) ---
+    # --- 8. User-Item Interaction features (6D) ---
+    if interaction_data is not None and idx_to_user is not None and idx_to_item is not None:
+        has_bought = np.zeros(n_samples, dtype=np.float32)
+        purchase_count = np.zeros(n_samples, dtype=np.float32)
+        days_since_purchase = np.full(n_samples, 999.0, dtype=np.float32)
+        has_bought_cat = np.zeros(n_samples, dtype=np.float32)
+        cat_purchase_count = np.zeros(n_samples, dtype=np.float32)
+        item_price_ratio = price_ratio.copy()  # already computed above
+
+        for i in range(n_samples):
+            u_idx = user_indices[i // top_k]
+            i_idx = flat_items[i]
+            uid = idx_to_user.get(int(u_idx), "")
+            aid = idx_to_item.get(int(i_idx), "")
+
+            user_data = interaction_data.get(uid)
+            if user_data is None:
+                continue
+
+            # Item-level interaction
+            item_info = user_data.get("items", {}).get(aid)
+            if item_info:
+                has_bought[i] = 1.0
+                purchase_count[i] = item_info["count"]
+                days_since_purchase[i] = item_info["last_days"]
+
+            # Category-level interaction
+            cat = item_categories.get(aid, "") if item_categories else ""
+            if cat:
+                cat_count = user_data.get("categories", {}).get(cat, 0)
+                if cat_count > 0:
+                    has_bought_cat[i] = 1.0
+                    cat_purchase_count[i] = cat_count
+
+        blocks.append(np.column_stack([
+            has_bought, purchase_count, days_since_purchase,
+            has_bought_cat, cat_purchase_count, item_price_ratio,
+        ]))
+        names.extend([
+            "has_bought_before", "purchase_count", "days_since_item_purchase",
+            "has_bought_category", "category_purchase_count", "user_item_price_ratio",
+        ])
+
+    # --- 9. BGE similarity (1D) ---
     if user_bge is not None and item_bge is not None:
         u_emb = user_bge[user_indices]  # (N, 768)
         u_emb_rep = np.repeat(u_emb, top_k, axis=0)  # (N*K, 768)
