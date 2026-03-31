@@ -184,8 +184,34 @@
 - [x] Stage 1 early stopping 추가 — max 20ep + patience 3, best S1 model 로드
 - [x] Stage 2 early stopping 추가 — max 10ep + patience 3, best S2 model 로드 (코드 완료, 다음 실행부터 적용)
 - [x] KAR v2 학습 중 (Stage1 ES 적용) — S1 best MAP@12=0.005462 (ep2), S3 best MAP@12=0.005265 (ep5)
-- [ ] KAR v2 전체 유저 prediction + MAP@12 확정
-- [ ] KAR v3: Stage 2 early stopping 적용으로 재학습 — S2에서 expert 과적합 방지 후 성능 변화 확인
+- [x] KAR v2 전체 유저 prediction — MAP@12=0.003312 (87.6%), DCNv2 단독보다 낮음
+- [x] KAR v3 (S1+S2 ES, align 0.001, val 5K, patience 5) — 전체 MAP@12=0.003499 (92.5%), 첫 DCNv2 돌파 (+4.1%)
+- [ ] KAR v4 학습 중 (F3 Gated Fusion + Expert LayerNorm + Stage 2 BCE 포함)
+- [ ] KAR v4 전체 유저 prediction + MAP@12 확정
+
+### Phase 4b: 다중 후보 생성 + 상호작용 피처 강화 (Kaggle 상위 솔루션 참고)
+
+현재 bottleneck: 단일 모델(DCNv2)로 105K 전체 카탈로그 스코어링 → 후보 품질 낮음.
+Kaggle 1등(MAP@12~0.037)은 다중 소스 후보 + 풍부한 유저-아이템 피처로 ReRank.
+
+**후보 생성 다양화:**
+- [ ] 재구매 후보 생성 — 유저 과거 구매 아이템 + 같은 product_code SKU (DuckDB 쿼리)
+- [ ] 최근 인기 후보 — 7일/14일/30일 window별 인기 아이템 (시간 가중)
+- [ ] 연령대별 인기 후보 — age_group × product_type 교차 인기
+- [ ] 다중 소스 후보 합집합 → Top-100 후보 풀 구성
+
+**유저-아이템 상호작용 피처 (ReRanker용):**
+- [ ] `has_bought_category` — 유저가 이 카테고리를 산 적 있는지 (bool)
+- [ ] `category_purchase_count` — 이 카테고리 구매 횟수
+- [ ] `days_since_last_category` — 이 카테고리 마지막 구매 후 경과일
+- [ ] `price_ratio` — 유저 평균 가격 대비 아이템 가격 비율
+- [ ] `color_affinity` — 유저의 선호 색상과 아이템 색상 일치 여부
+- [ ] `repurchase_score` — 과거 동일 product_code 구매 여부
+
+**실험 프레임워크:**
+- [ ] ReRank-Base 강화 (다중 후보 + 상호작용 피처) → 강한 baseline 확보
+- [ ] ReRank-Full 강화 (강한 baseline + L1+L2+L3 속성) → KAR 증분 가치 측정
+- [ ] 강한 baseline 위에서 KAR 증분 가치가 유의미한지 검증
 
 ### 서버 실행 커맨드 (Phase 4 마무리)
 
