@@ -306,6 +306,56 @@ def encode_item_attributes(
 
 
 # ---------------------------------------------------------------------------
+# KAR Feature Block (replaces lossy LabelEncoder attributes)
+# ---------------------------------------------------------------------------
+
+
+def build_kar_feature_block(
+    kar_intermediates: dict[str, np.ndarray],
+    top_k: int,
+) -> tuple[np.ndarray, list[str]]:
+    """Convert KAR Expert/Gating intermediates to flat ReRanker features.
+
+    Replaces LabelEncoder-based attribute features (~107D lossy integer codes)
+    with dense learned vectors from KAR Expert MLPs (130D, semantic-preserving).
+
+    Args:
+        kar_intermediates: dict with:
+            - kar_e_fact: (N, K, 64) factual expert output per candidate
+            - kar_e_reason: (N, K, 64) reasoning expert output per candidate
+            - kar_g_fact: (N, K, 1) factual gating weight
+            - kar_g_reason: (N, K, 1) reasoning gating weight
+        top_k: Number of candidates per user (K).
+
+    Returns:
+        (features, names): (N*K, 130) float32 array and feature name list.
+    """
+    e_fact = kar_intermediates["kar_e_fact"]      # (N, K, 64)
+    e_reason = kar_intermediates["kar_e_reason"]  # (N, K, 64)
+    g_fact = kar_intermediates["kar_g_fact"]      # (N, K, 1)
+    g_reason = kar_intermediates["kar_g_reason"]  # (N, K, 1)
+
+    n_users = e_fact.shape[0]
+    d_rec = e_fact.shape[2]
+
+    # Flatten (N, K, D) → (N*K, D)
+    flat_e_fact = e_fact.reshape(n_users * top_k, d_rec).astype(np.float32)
+    flat_e_reason = e_reason.reshape(n_users * top_k, d_rec).astype(np.float32)
+    flat_g_fact = g_fact.reshape(n_users * top_k, 1).astype(np.float32)
+    flat_g_reason = g_reason.reshape(n_users * top_k, 1).astype(np.float32)
+
+    features = np.concatenate(
+        [flat_e_fact, flat_e_reason, flat_g_fact, flat_g_reason], axis=1
+    )
+    names = (
+        [f"kar_e_fact_{i}" for i in range(d_rec)]
+        + [f"kar_e_reason_{i}" for i in range(d_rec)]
+        + ["kar_g_fact", "kar_g_reason"]
+    )
+    return features, names
+
+
+# ---------------------------------------------------------------------------
 # Re-Ranker Feature Construction
 # ---------------------------------------------------------------------------
 
@@ -324,8 +374,14 @@ def build_reranker_features(
     idx_to_user: dict[int, str] | None = None,
     idx_to_item: dict[int, str] | None = None,
     item_categories: dict[str, str] | None = None,
+    kar_intermediates: dict[str, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, list[str]]:
     """Build feature matrix for all user×candidate pairs.
+
+    Three modes (controlled by which optional args are provided):
+      - Base: item_attributes=None, kar_intermediates=None → ~24D
+      - Full: item_attributes provided → ~133D (LabelEncoder attributes)
+      - KAR:  kar_intermediates provided → ~161D (dense Expert vectors)
 
     Args:
         user_indices: (N,) user feature indices.
@@ -333,10 +389,11 @@ def build_reranker_features(
         candidate_scores: (N, K) Stage 1 scores (descending).
         user_features: {categorical: (n_users, 3), numerical: (n_users, 8)}.
         item_features: {categorical: (n_items, 5), numerical: (n_items, 2)}.
-        item_attributes: (n_items, D_attr) encoded attributes or None for Base mode.
+        item_attributes: (n_items, D_attr) encoded attributes or None.
         attribute_names: Feature names for attributes or None.
         user_bge: (n_users, 768) or None.
         item_bge: (n_items, 768) or None.
+        kar_intermediates: KAR Expert/Gating outputs or None.
 
     Returns:
         (X, feature_names): (N*K, D_total), list of D_total names.
@@ -386,6 +443,12 @@ def build_reranker_features(
         attr_feats = item_attributes[flat_items]  # (N*K, D_attr)
         blocks.append(attr_feats.astype(np.float32))
         names.extend(attribute_names)
+
+    # --- 4b. KAR Expert features (KAR mode, replaces lossy attributes) ---
+    if kar_intermediates is not None:
+        kar_block, kar_names = build_kar_feature_block(kar_intermediates, top_k)
+        blocks.append(kar_block)
+        names.extend(kar_names)
 
     # --- 7. Cross features (3D) ---
     u_age = u_cat_rep[:, 0]  # age_group

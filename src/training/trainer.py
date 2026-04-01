@@ -785,6 +785,270 @@ def extract_stage1_candidates(
     }
 
 
+def extract_stage1_candidates_kar(
+    model: Any,
+    target_user_ids: list[str],
+    user_features: dict[str, np.ndarray],
+    item_features: dict[str, np.ndarray],
+    item_embeddings: np.ndarray,
+    user_embeddings: np.ndarray,
+    user_to_idx: dict[str, int],
+    top_k: int = 100,
+    batch_size: int = 2,
+    backbone_name: str = "deepfm",
+    extract_intermediates: bool = False,
+) -> dict[str, np.ndarray]:
+    """Extract top-K candidates with scores from KAR model.
+
+    Like extract_stage1_candidates() but for KARModel — constructs KARInput
+    with BGE embeddings and optionally extracts Expert/Gating intermediates
+    for the top-K candidates (2nd pass, memory-safe).
+
+    Args:
+        model: Trained KARModel with predict_proba() and forward_with_intermediates().
+        target_user_ids: User IDs to generate candidates for.
+        user_features: {categorical: (n_users, 3), numerical: (n_users, 8)}.
+        item_features: {categorical: (n_items, 5), numerical: (n_items, 2)}.
+        item_embeddings: (n_items, 768) aligned BGE item embeddings.
+        user_embeddings: (n_users, 768) aligned BGE user embeddings.
+        user_to_idx: user_id → feature index mapping.
+        top_k: Number of candidates per user.
+        batch_size: Users per forward-pass batch (small due to KAR memory).
+        backbone_name: Base backbone name (deepfm, dcnv2, etc.).
+        extract_intermediates: If True, extract e_fact/e_reason/g_fact/g_reason
+            for top-K candidates via a second pass.
+
+    Returns:
+        dict with:
+        - user_indices: (N,) int32
+        - candidate_indices: (N, K) int32
+        - candidate_scores: (N, K) float32
+        When extract_intermediates=True, also:
+        - kar_e_fact: (N, K, 64) float32
+        - kar_e_reason: (N, K, 64) float32
+        - kar_g_fact: (N, K, 1) float32
+        - kar_g_reason: (N, K, 1) float32
+    """
+    from src.kar.hybrid import KARInput
+
+    n_items = item_features["categorical"].shape[0]
+    item_cat_jax = jnp.array(item_features["categorical"], dtype=jnp.int32)
+    item_num_jax = jnp.array(item_features["numerical"], dtype=jnp.float32)
+    item_emb_jax = jnp.array(item_embeddings, dtype=jnp.float32)
+
+    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
+
+    all_user_indices: list[int] = []
+    all_candidate_indices: list[np.ndarray] = []
+    all_candidate_scores: list[np.ndarray] = []
+    all_e_fact: list[np.ndarray] = []
+    all_e_reason: list[np.ndarray] = []
+    all_g_fact: list[np.ndarray] = []
+    all_g_reason: list[np.ndarray] = []
+
+    model.eval()
+    spec = get_backbone(backbone_name)
+
+    for batch_start in range(0, len(valid_pairs), batch_size):
+        batch_pairs = valid_pairs[batch_start : batch_start + batch_size]
+        batch_idxs = np.array([p[1] for p in batch_pairs])
+        n_batch = len(batch_idxs)
+
+        # --- Build KARInput for full catalog scoring ---
+        h_fact = jnp.tile(item_emb_jax, (n_batch, 1))  # (B*n_items, 768)
+        h_reason = jnp.repeat(
+            jnp.array(user_embeddings[batch_idxs], dtype=jnp.float32), n_items, axis=0
+        )  # (B*n_items, 768)
+
+        if spec.needs_graph:
+            user_idx_arr = jnp.repeat(jnp.array(batch_idxs, dtype=jnp.int32), n_items)
+            item_idx_arr = jnp.tile(jnp.arange(n_items, dtype=jnp.int32), n_batch)
+            base_input = LightGCNInput(user_idx=user_idx_arr, item_idx=item_idx_arr)
+        else:
+            # feature-based: deepfm, dcnv2
+            u_cat_tiled = jnp.repeat(
+                jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32),
+                n_items, axis=0,
+            )
+            u_num_tiled = jnp.repeat(
+                jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32),
+                n_items, axis=0,
+            )
+            i_cat_tiled = jnp.tile(item_cat_jax, (n_batch, 1))
+            i_num_tiled = jnp.tile(item_num_jax, (n_batch, 1))
+            base_input = DeepFMInput(
+                user_cat=u_cat_tiled, user_num=u_num_tiled,
+                item_cat=i_cat_tiled, item_num=i_num_tiled,
+            )
+
+        kar_input = KARInput(base_input=base_input, h_fact=h_fact, h_reason=h_reason)
+        scores = model.predict_proba(kar_input).reshape(n_batch, n_items)
+
+        top_k_idx = jnp.argsort(scores, axis=-1)[:, ::-1][:, :top_k]
+        top_k_scores = jnp.take_along_axis(scores, top_k_idx, axis=-1)
+
+        all_user_indices.extend(batch_idxs.tolist())
+        all_candidate_indices.append(np.array(top_k_idx))
+        all_candidate_scores.append(np.array(top_k_scores))
+
+        # --- 2nd pass: extract intermediates for top-K only ---
+        if extract_intermediates:
+            top_k_idx_np = np.array(top_k_idx)  # (B, K)
+            for b in range(n_batch):
+                u_idx = batch_idxs[b]
+                cand_idxs = top_k_idx_np[b]  # (K,)
+
+                h_f = jnp.array(item_embeddings[cand_idxs], dtype=jnp.float32)  # (K, 768)
+                h_r = jnp.tile(
+                    jnp.array(user_embeddings[u_idx], dtype=jnp.float32), (top_k, 1)
+                )  # (K, 768)
+
+                if spec.needs_graph:
+                    b_input = LightGCNInput(
+                        user_idx=jnp.full((top_k,), u_idx, dtype=jnp.int32),
+                        item_idx=jnp.array(cand_idxs, dtype=jnp.int32),
+                    )
+                else:
+                    u_cat_k = jnp.tile(
+                        jnp.array(user_features["categorical"][u_idx], dtype=jnp.int32),
+                        (top_k, 1),
+                    )
+                    u_num_k = jnp.tile(
+                        jnp.array(user_features["numerical"][u_idx], dtype=jnp.float32),
+                        (top_k, 1),
+                    )
+                    i_cat_k = jnp.array(
+                        item_features["categorical"][cand_idxs], dtype=jnp.int32
+                    )
+                    i_num_k = jnp.array(
+                        item_features["numerical"][cand_idxs], dtype=jnp.float32
+                    )
+                    b_input = DeepFMInput(
+                        user_cat=u_cat_k, user_num=u_num_k,
+                        item_cat=i_cat_k, item_num=i_num_k,
+                    )
+
+                kar_k = KARInput(base_input=b_input, h_fact=h_f, h_reason=h_r)
+                _, intermediates = model.forward_with_intermediates(kar_k)
+                all_e_fact.append(np.array(intermediates["e_fact"]))      # (K, 64)
+                all_e_reason.append(np.array(intermediates["e_reason"]))  # (K, 64)
+                all_g_fact.append(np.array(intermediates["g_fact"]))      # (K, 1)
+                all_g_reason.append(np.array(intermediates["g_reason"]))  # (K, 1)
+
+        done = batch_start + n_batch
+        if (batch_start // batch_size) % 20 == 0:
+            print(f"  KAR Stage 1 extraction: {done:,}/{len(valid_pairs):,} users")
+
+    model.train()
+
+    result = {
+        "user_indices": np.array(all_user_indices, dtype=np.int32),
+        "candidate_indices": np.concatenate(all_candidate_indices, axis=0),
+        "candidate_scores": np.concatenate(all_candidate_scores, axis=0),
+    }
+
+    if extract_intermediates and all_e_fact:
+        n_users = len(all_user_indices)
+        result["kar_e_fact"] = np.stack(all_e_fact).reshape(n_users, top_k, -1)
+        result["kar_e_reason"] = np.stack(all_e_reason).reshape(n_users, top_k, -1)
+        result["kar_g_fact"] = np.stack(all_g_fact).reshape(n_users, top_k, -1)
+        result["kar_g_reason"] = np.stack(all_g_reason).reshape(n_users, top_k, -1)
+
+    return result
+
+
+def extract_kar_intermediates_for_candidates(
+    model: Any,
+    candidates: dict[str, np.ndarray],
+    user_features: dict[str, np.ndarray],
+    item_features: dict[str, np.ndarray],
+    item_embeddings: np.ndarray,
+    user_embeddings: np.ndarray,
+    backbone_name: str = "deepfm",
+) -> dict[str, np.ndarray]:
+    """Extract KAR intermediates for an existing candidate set (e.g., after blending).
+
+    Used when multi-source candidates are blended and intermediates need to be
+    computed for the final candidate pool rather than the original Stage 1 pool.
+
+    Args:
+        model: Trained KARModel.
+        candidates: {user_indices (N,), candidate_indices (N, K), candidate_scores (N, K)}.
+        user_features: {categorical, numerical}.
+        item_features: {categorical, numerical}.
+        item_embeddings: (n_items, 768).
+        user_embeddings: (n_users, 768).
+        backbone_name: Base backbone name.
+
+    Returns:
+        dict with kar_e_fact (N,K,64), kar_e_reason (N,K,64),
+        kar_g_fact (N,K,1), kar_g_reason (N,K,1).
+    """
+    from src.kar.hybrid import KARInput
+
+    user_indices = candidates["user_indices"]
+    candidate_indices = candidates["candidate_indices"]
+    n_users = user_indices.shape[0]
+    top_k = candidate_indices.shape[1]
+    spec = get_backbone(backbone_name)
+
+    all_e_fact: list[np.ndarray] = []
+    all_e_reason: list[np.ndarray] = []
+    all_g_fact: list[np.ndarray] = []
+    all_g_reason: list[np.ndarray] = []
+
+    model.eval()
+
+    for i in range(n_users):
+        u_idx = int(user_indices[i])
+        cand_idxs = candidate_indices[i]  # (K,)
+
+        h_f = jnp.array(item_embeddings[cand_idxs], dtype=jnp.float32)
+        h_r = jnp.tile(
+            jnp.array(user_embeddings[u_idx], dtype=jnp.float32), (top_k, 1)
+        )
+
+        if spec.needs_graph:
+            b_input = LightGCNInput(
+                user_idx=jnp.full((top_k,), u_idx, dtype=jnp.int32),
+                item_idx=jnp.array(cand_idxs, dtype=jnp.int32),
+            )
+        else:
+            u_cat_k = jnp.tile(
+                jnp.array(user_features["categorical"][u_idx], dtype=jnp.int32),
+                (top_k, 1),
+            )
+            u_num_k = jnp.tile(
+                jnp.array(user_features["numerical"][u_idx], dtype=jnp.float32),
+                (top_k, 1),
+            )
+            i_cat_k = jnp.array(item_features["categorical"][cand_idxs], dtype=jnp.int32)
+            i_num_k = jnp.array(item_features["numerical"][cand_idxs], dtype=jnp.float32)
+            b_input = DeepFMInput(
+                user_cat=u_cat_k, user_num=u_num_k,
+                item_cat=i_cat_k, item_num=i_num_k,
+            )
+
+        kar_k = KARInput(base_input=b_input, h_fact=h_f, h_reason=h_r)
+        _, intermediates = model.forward_with_intermediates(kar_k)
+        all_e_fact.append(np.array(intermediates["e_fact"]))
+        all_e_reason.append(np.array(intermediates["e_reason"]))
+        all_g_fact.append(np.array(intermediates["g_fact"]))
+        all_g_reason.append(np.array(intermediates["g_reason"]))
+
+        if (i + 1) % 500 == 0:
+            print(f"  KAR intermediates: {i + 1:,}/{n_users:,} users")
+
+    model.train()
+
+    return {
+        "kar_e_fact": np.stack(all_e_fact),      # (N, K, 64)
+        "kar_e_reason": np.stack(all_e_reason),  # (N, K, 64)
+        "kar_g_fact": np.stack(all_g_fact),      # (N, K, 1)
+        "kar_g_reason": np.stack(all_g_reason),  # (N, K, 1)
+    }
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------

@@ -4,9 +4,10 @@
   Stage 1: Trained backbone (DeepFM) → top-K candidates with scores
   Stage 2: LightGBM re-ranker → re-sort top-K → top-12 recommendations
 
-Two modes:
-  - Base: score + rank + user/item features only (~21D)
-  - Full: Base + L1/L2/L3 attributes + cross features + BGE similarity (~127D)
+Three modes:
+  - Base: score + rank + user/item features only (~24D)
+  - Full: Base + L1/L2/L3 attributes + cross features + BGE similarity (~133D)
+  - KAR:  Base + KAR Expert/Gating dense features + BGE similarity (~161D)
 
 Usage:
     # ReRank-Base
@@ -28,6 +29,28 @@ Usage:
         --embeddings-dir data/embeddings \\
         --output-dir results/reranker \\
         --mode full --no-wandb
+
+    # ReRank-KAR (KAR Stage 1 + dense Expert features)
+    python scripts/train_reranker.py \\
+        --stage1-model-dir results/models \\
+        --stage1-backbone kar_deepfm \\
+        --data-dir data/processed \\
+        --features-dir data/features \\
+        --embeddings-dir data/embeddings \\
+        --output-dir results/reranker \\
+        --mode kar --no-wandb
+
+    # ReRank-KAR + multi-source
+    python scripts/train_reranker.py \\
+        --stage1-model-dir results/models \\
+        --stage1-backbone kar_deepfm \\
+        --data-dir data/processed \\
+        --features-dir data/features \\
+        --embeddings-dir data/embeddings \\
+        --output-dir results/reranker \\
+        --mode kar \\
+        --candidate-sources "stage1,repurchase,age_pop,recency" \\
+        --no-wandb
 """
 
 from __future__ import annotations
@@ -56,7 +79,7 @@ def main(
     embeddings_dir: Optional[Path] = typer.Option(None, help="BGE embeddings dir (Full mode)"),
     output_dir: Path = typer.Option(..., help="Output dir for reranker"),
     # --- ReRanker mode ---
-    mode: str = typer.Option("full", help="'base' or 'full'"),
+    mode: str = typer.Option("full", help="'base', 'full', or 'kar'"),
     top_k: int = typer.Option(100, help="Stage 1 candidate pool size"),
     k: int = typer.Option(12, help="Final recommendation list size"),
     split: str = typer.Option("val", help="Evaluation split"),
@@ -99,7 +122,9 @@ def main(
     from src.training.trainer import (
         _load_model_state,
         create_train_state,
+        extract_kar_intermediates_for_candidates,
         extract_stage1_candidates,
+        extract_stage1_candidates_kar,
     )
 
     t0 = time.time()
@@ -118,8 +143,14 @@ def main(
         random_seed=random_seed,
     )
 
+    # --- Parse KAR backbone ---
+    is_kar = stage1_backbone.startswith("kar_")
+    base_backbone = stage1_backbone.replace("kar_", "", 1) if is_kar else stage1_backbone
+
     print(f"=== GBDT Re-Ranker ({mode.upper()}) ===")
     print(f"  Stage 1: {stage1_backbone} from {stage1_model_dir}")
+    if is_kar:
+        print(f"  KAR mode: base_backbone={base_backbone}")
     print(f"  Top-K: {top_k}, Final K: {k}")
 
     # --- Load features ---
@@ -150,7 +181,14 @@ def main(
     candidates_dir = output_dir / "candidates"
     candidates_dir.mkdir(parents=True, exist_ok=True)
     cache_suffix = "_".join(sources_list)
+    if mode == "kar":
+        cache_suffix = f"kar_{cache_suffix}"
     cache_path = candidates_dir / f"{stage1_backbone}_{cache_suffix}_{split}.npz"
+
+    # KAR model + embeddings (loaded once, reused for extraction + intermediates)
+    kar_model = None
+    kar_item_emb = None
+    kar_user_emb = None
 
     if cache_candidates and cache_path.exists():
         print(f"  Loading cached candidates from {cache_path}")
@@ -177,27 +215,93 @@ def main(
 
         # Stage 1 model candidates
         if "stage1" in sources_list:
-            from src.config import DeepFMConfig, DCNv2Config, TrainConfig
+            # Try reusing existing single-source cache before loading model
+            s1_cands = None
+            for s1_cache_name in [
+                f"{stage1_backbone}_{split}.npz",
+                f"{stage1_backbone}_stage1_{split}.npz",
+            ]:
+                s1_cache_path = candidates_dir / s1_cache_name
+                if s1_cache_path.exists():
+                    print(f"  [stage1] Loading from existing cache: {s1_cache_path}")
+                    _c = np.load(s1_cache_path)
+                    _loaded = {k: _c[k] for k in ["user_indices", "candidate_indices", "candidate_scores"]}
+                    # Filter to target users only (handles --val-sample-users)
+                    target_idx_set = np.array(
+                        [user_to_idx[u] for u in target_user_ids if u in user_to_idx],
+                        dtype=np.int32,
+                    )
+                    mask = np.isin(_loaded["user_indices"], target_idx_set)
+                    s1_cands = {
+                        "user_indices": _loaded["user_indices"][mask],
+                        "candidate_indices": _loaded["candidate_indices"][mask],
+                        "candidate_scores": _loaded["candidate_scores"][mask],
+                    }
+                    break
 
-            if stage1_backbone == "deepfm":
-                model_config = DeepFMConfig()
-            elif stage1_backbone == "dcnv2":
-                model_config = DCNv2Config()
-            else:
-                raise ValueError(f"Unsupported stage1_backbone: {stage1_backbone}")
+            if s1_cands is None:
+                from src.config import DeepFMConfig, DCNv2Config, KARConfig, TrainConfig
 
-            train_config = TrainConfig(random_seed=random_seed)
-            model, _ = create_train_state(
-                stage1_backbone, model_config, train_config, feature_meta, features_dir
-            )
-            model_checkpoint = stage1_model_dir / f"{stage1_backbone}_best"
-            _load_model_state(model, model_checkpoint)
-            print(f"  [stage1] Loaded model from {model_checkpoint}")
+                if is_kar:
+                    # KAR model loading
+                    from src.kar.embedding_index import build_aligned_embeddings
+                    from src.training.trainer import create_kar_train_state
 
-            s1_cands = extract_stage1_candidates(
-                model, target_user_ids, user_features, item_features,
-                user_to_idx, top_k=top_k, batch_size=4,
-            )
+                    if base_backbone == "deepfm":
+                        base_config = DeepFMConfig()
+                    elif base_backbone == "dcnv2":
+                        base_config = DCNv2Config()
+                    else:
+                        raise ValueError(f"Unsupported KAR base backbone: {base_backbone}")
+
+                    kar_config = KARConfig()
+                    train_config = TrainConfig(random_seed=random_seed)
+                    kar_model, _ = create_kar_train_state(
+                        base_backbone, base_config, kar_config, train_config,
+                        feature_meta, features_dir,
+                    )
+                    model_checkpoint = stage1_model_dir / f"kar_{base_backbone}_best"
+                    _load_model_state(kar_model, model_checkpoint)
+                    print(f"  [stage1] Loaded KAR model from {model_checkpoint}")
+
+                    if embeddings_dir is None:
+                        raise typer.BadParameter(
+                            "--embeddings-dir required for KAR backbone"
+                        )
+                    kar_item_emb, kar_user_emb = build_aligned_embeddings(
+                        features_dir, embeddings_dir
+                    )
+                    print(f"  [stage1] BGE embeddings: items {kar_item_emb.shape}, "
+                          f"users {kar_user_emb.shape}")
+
+                    s1_cands = extract_stage1_candidates_kar(
+                        kar_model, target_user_ids, user_features, item_features,
+                        kar_item_emb, kar_user_emb, user_to_idx,
+                        top_k=top_k, batch_size=2, backbone_name=base_backbone,
+                        extract_intermediates=False,  # intermediates extracted after blend
+                    )
+                else:
+                    # Vanilla model loading
+                    if base_backbone == "deepfm":
+                        model_config = DeepFMConfig()
+                    elif base_backbone == "dcnv2":
+                        model_config = DCNv2Config()
+                    else:
+                        raise ValueError(f"Unsupported stage1_backbone: {stage1_backbone}")
+
+                    train_config = TrainConfig(random_seed=random_seed)
+                    model, _ = create_train_state(
+                        base_backbone, model_config, train_config, feature_meta, features_dir
+                    )
+                    model_checkpoint = stage1_model_dir / f"{base_backbone}_best"
+                    _load_model_state(model, model_checkpoint)
+                    print(f"  [stage1] Loaded model from {model_checkpoint}")
+
+                    s1_cands = extract_stage1_candidates(
+                        model, target_user_ids, user_features, item_features,
+                        user_to_idx, top_k=top_k, batch_size=4,
+                    )
+
             all_sources.append(s1_cands)
             print(f"  [stage1] {s1_cands['user_indices'].shape[0]:,} users")
 
@@ -244,6 +348,62 @@ def main(
     n_users_extracted = candidates["user_indices"].shape[0]
     print(f"  Extracted: {n_users_extracted:,} users × {top_k} candidates")
 
+    # --- KAR intermediates extraction (after blend, for final candidate pool) ---
+    kar_intermediates = None
+    if mode == "kar" and is_kar:
+        cached_has_intermediates = (
+            cache_candidates and cache_path.exists()
+            and "kar_e_fact" in np.load(cache_path, mmap_mode="r").files
+        )
+        if cached_has_intermediates:
+            cached = np.load(cache_path)
+            kar_intermediates = {
+                k: cached[k] for k in ["kar_e_fact", "kar_e_reason", "kar_g_fact", "kar_g_reason"]
+            }
+            print(f"  KAR intermediates loaded from cache")
+        else:
+            # Load KAR model + embeddings if not already loaded
+            if kar_model is None:
+                from src.config import DeepFMConfig, DCNv2Config, KARConfig, TrainConfig
+                from src.kar.embedding_index import build_aligned_embeddings
+                from src.training.trainer import create_kar_train_state
+
+                if base_backbone == "deepfm":
+                    base_config = DeepFMConfig()
+                elif base_backbone == "dcnv2":
+                    base_config = DCNv2Config()
+                else:
+                    raise ValueError(f"Unsupported KAR base backbone: {base_backbone}")
+
+                kar_config = KARConfig()
+                train_config = TrainConfig(random_seed=random_seed)
+                kar_model, _ = create_kar_train_state(
+                    base_backbone, base_config, kar_config, train_config,
+                    feature_meta, features_dir,
+                )
+                model_checkpoint = stage1_model_dir / f"kar_{base_backbone}_best"
+                _load_model_state(kar_model, model_checkpoint)
+                print(f"  [kar] Loaded KAR model from {model_checkpoint}")
+
+                if embeddings_dir is None:
+                    raise typer.BadParameter("--embeddings-dir required for KAR mode")
+                kar_item_emb, kar_user_emb = build_aligned_embeddings(
+                    features_dir, embeddings_dir
+                )
+
+            print(f"  Extracting KAR intermediates for {n_users_extracted:,} users...")
+            kar_intermediates = extract_kar_intermediates_for_candidates(
+                kar_model, candidates, user_features, item_features,
+                kar_item_emb, kar_user_emb, backbone_name=base_backbone,
+            )
+            print(f"  KAR intermediates: e_fact {kar_intermediates['kar_e_fact'].shape}")
+
+            # Save intermediates to cache
+            if cache_candidates:
+                save_dict = {**candidates, **kar_intermediates}
+                np.savez_compressed(cache_path, **save_dict)
+                print(f"  Cached candidates + intermediates to {cache_path}")
+
     # --- Build features ---
     print(f"\n[3/6] Building {mode} features...")
     item_attributes = None
@@ -279,6 +439,15 @@ def main(
                 item_bge, user_bge = build_aligned_embeddings(features_dir, embeddings_dir)
                 print(f"  BGE embeddings: items {item_bge.shape}, users {user_bge.shape}")
 
+    if mode == "kar" and embeddings_dir is not None:
+        # Load BGE for cosine similarity feature (reuse if already loaded)
+        if kar_item_emb is not None and kar_user_emb is not None:
+            item_bge, user_bge = kar_item_emb, kar_user_emb
+        else:
+            from src.kar.embedding_index import build_aligned_embeddings
+            item_bge, user_bge = build_aligned_embeddings(features_dir, embeddings_dir)
+        print(f"  BGE embeddings (for cosine sim): items {item_bge.shape}, users {user_bge.shape}")
+
     # --- Build interaction data (for user-item features) ---
     interaction_data = None
     item_categories = None
@@ -309,6 +478,7 @@ def main(
         idx_to_user=idx_to_user,
         idx_to_item=idx_to_item,
         item_categories=item_categories,
+        kar_intermediates=kar_intermediates,
     )
     y = build_reranker_labels(
         candidates["user_indices"],
@@ -375,6 +545,8 @@ def main(
     metrics = {
         "mode": mode,
         "stage1_backbone": stage1_backbone,
+        "is_kar": is_kar,
+        "candidate_sources": sources_list,
         "top_k": top_k,
         "n_features": X.shape[1],
         "n_train_samples": int(X_train.shape[0]),

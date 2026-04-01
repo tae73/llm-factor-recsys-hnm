@@ -103,6 +103,28 @@ python scripts/train_reranker.py \
     --candidate-sources "stage1,repurchase,age_pop,recency" \
     --no-wandb
 
+# KAR mode — KAR Stage 1 + dense Expert/Gating features (replaces lossy LabelEncoder)
+python scripts/train_reranker.py \
+    --stage1-model-dir results/models \
+    --stage1-backbone kar_deepfm \
+    --data-dir data/processed \
+    --features-dir data/features \
+    --embeddings-dir data/embeddings \
+    --output-dir results/reranker \
+    --mode kar --no-wandb
+
+# KAR mode — multi-source candidates
+python scripts/train_reranker.py \
+    --stage1-model-dir results/models \
+    --stage1-backbone kar_deepfm \
+    --data-dir data/processed \
+    --features-dir data/features \
+    --embeddings-dir data/embeddings \
+    --output-dir results/reranker \
+    --mode kar \
+    --candidate-sources "stage1,repurchase,age_pop,recency" \
+    --no-wandb
+
 # 3g. Pre-store expert outputs for serving
 python scripts/prestore.py \
     --model-dir results/models \
