@@ -124,6 +124,7 @@ JAX + Flax NNX + Optax | DuckDB + Parquet | BGE-base-en-v1.5 | GPT-4o-mini | Fas
 
 ## Documentation
 
+- [Data Setup](docs/data_setup.md) — 데이터 디렉토리 레이아웃·형태·취득/복원 방법 (RAW + 파생). `data/`는 git-ignored
 - [Research Design](docs/research_design/hm_unified_project_design.md) — Full project design (architecture, experiments, roadmap)
 - [Cold-Start Analysis](docs/cold_start_analysis.md) — Triple-Sparsity analysis and resolution strategies
 - [MLOps Design](docs/mlops_design/) — Serving, monitoring, deployment design
