@@ -1,0 +1,31 @@
+# rsync 공통 제외 패턴 (scripts/sync.sh가 --exclude-from으로 사용)
+# VCS / IDE / 캐시
+.git/
+.idea/
+.vscode/
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# 실험 추적 / 대용량 산출물 부산물
+wandb/
+ray_results/
+
+# raw 데이터 — 32GB, 절대 동기화 안 함 (서버에서 kaggle로 직접 받기)
+data/h-and-m-personalized-fashion-recommendations/
+
+# 비밀 / 로컬 전용 — 서버로 밀지 않음
+*.pem
+.env
+.env.local
+.sync.env

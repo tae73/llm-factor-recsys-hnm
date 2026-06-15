@@ -1571,3 +1571,91 @@ data/embeddings/item_bge_embeddings.npz ───┘
                     │
                     └──→ results/analysis/
 ```
+
+---
+
+## 서버 동기화 (`scripts/sync.sh`)
+
+로컬 ↔ 원격 서버 파일 동기화. **PyCharm SFTP auto-upload 대체** — `rsync`(SSH 1연결 배치 + delta 전송 + 압축 + exclude)로 코드 동기화가 증분 시 1초 미만. Python 스크립트가 아닌 bash 유틸이며, 접속 설정은 프로젝트 루트의 `.sync.env`(git-ignored)에서 읽는다.
+
+### 접속 설정 (`.sync.env`)
+
+```sh
+REMOTE_USER=mail-agent
+REMOTE_HOST=3.38.195.121
+REMOTE_PORT=5040
+SSH_KEY=                                                  # 비우면 기본 키/패스워드 (키 인증이면 비움)
+REMOTE_DIR=/home/mail-agent/project/llm-factor-recsys-hnm
+REMOTE_RSYNC=/home/mail-agent/.local/bin/rsync            # 서버 userland rsync (시스템 rsync 있으면 비움)
+```
+
+서버에 시스템 rsync가 없을 경우(no-sudo) userland 설치:
+```bash
+ssh -p 5040 mail-agent@3.38.195.121
+cd /tmp && curl -sSO http://security.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7_amd64.deb
+curl -sSO http://archive.ubuntu.com/ubuntu/pool/main/libp/libpopt/libpopt0_1.18-3build1_amd64.deb
+for d in rsync_*.deb libpopt0_*.deb; do dpkg-deb -x "$d" ~/.local/rsync-pkg; done
+cat > ~/.local/bin/rsync <<'EOF'
+#!/bin/sh
+P="$HOME/.local/rsync-pkg"
+export LD_LIBRARY_PATH="$P/usr/lib/x86_64-linux-gnu:$P/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+exec "$P/usr/bin/rsync" "$@"
+EOF
+chmod +x ~/.local/bin/rsync
+# 또는 sudo 가능하면:  sudo apt-get update && sudo apt-get install -y rsync  (이후 REMOTE_RSYNC 비움)
+```
+
+### 서브커맨드
+
+| 명령 | 방향 | 대상 | 비고 |
+|------|------|------|------|
+| `push` | local→server | 코드(`src scripts configs tests mlops notebooks docs *.toml *.md`) | 가장 빠름. 존재하는 경로만 전송 |
+| `push-knowledge` | local→server | `data/knowledge/` (~1.6G) | LLM 산출물(재생성 불가) |
+| `push-data` | local→server | `processed/features/embeddings/segmentation/knowledge` | raw 32G 제외 |
+| `pull` | server→local | `results/` | 모델·예측 회수. `--delete` 미사용(로컬 보호) |
+| `push-skill <name>...` | local→server | `~/.claude/skills/<name>` (프로젝트 밖 글로벌 스킬) | 디렉터리/파일 모두 가능. 예: `portfolio-design USAGE.md` |
+| `remote "<cmd>"` | — | 서버에서 명령 실행 | 예: `remote "whoami && pwd"` |
+
+### 플래그
+
+- `-n` / `--dry-run`: 실제 전송 없이 미리보기 (특히 `--delete` 영향 사전확인)
+- `--delete`: 대상에서 원본에 없는 파일 삭제 (push 미러링용; **기본 off**, opt-in)
+
+### 예시
+
+```bash
+# 접속·원격 경로 확인
+./scripts/sync.sh remote "whoami && pwd"
+
+# 코드만 빠르게 업로드 (PyCharm auto-upload 대체)
+./scripts/sync.sh push
+
+# 변경 미리보기 후 업로드
+./scripts/sync.sh push -n
+./scripts/sync.sh push
+
+# LLM 지식 데이터 업로드 (1회성, 이후 델타)
+./scripts/sync.sh push-knowledge
+
+# 글로벌 스킬 업로드 (프로젝트 밖 ~/.claude/skills/)
+./scripts/sync.sh push-skill -n portfolio-design USAGE.md   # 미리보기
+./scripts/sync.sh push-skill portfolio-design USAGE.md
+
+# 서버에서 학습 후 결과 회수
+./scripts/sync.sh pull
+
+# 서버에서 학습 트리거
+./scripts/sync.sh remote "cd ~/project/llm-factor-recsys-hnm && python scripts/train.py --backbone deepfm"
+```
+
+### 제외 규칙 (`.rsync-exclude`)
+
+VCS/IDE/캐시(`.git/`, `.idea/`, `__pycache__/`, `*.pyc`, …), 실험 부산물(`wandb/`, `ray_results/`), **raw 데이터**(`data/h-and-m-personalized-fashion-recommendations/` 32G — 서버에서 kaggle로 직접 받기), **비밀/로컬 파일**(`*.pem`, `.env`, `.sync.env`)을 전송에서 제외.
+
+### 데이터 전략 (집 업로드 9~32GB 회피)
+
+| Tier | 대상 | 처리 |
+|------|------|------|
+| 반드시 업로드 | 코드 + `data/knowledge/` (~1.6G) | `push` / `push-knowledge` (재생성 불가) |
+| 서버 재생성 권장 | `processed`/`features`/`embeddings`/`segmentation` (~7.8G) | 서버에서 파이프라인 재실행(GPU가 빠름), 또는 `push-data` |
+| 안 올림 | raw (`data/h-and-m-.../` 32G) | 서버에서 `kaggle competitions download` (Kaggle 토큰 필요) |

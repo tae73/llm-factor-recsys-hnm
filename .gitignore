@@ -41,6 +41,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.sync.env
 
 # DVC
 /dvc.lock
