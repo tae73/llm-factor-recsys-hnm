@@ -3,6 +3,8 @@
 > 3-Layer Attribute Taxonomy + KAR Hybrid-Expert Adaptor for H&M Fashion Recommendation
 > — a **falsification-first** study that disproved its own hypothesis, diagnosed why, and pivoted to where the value actually is.
 
+**▶ [End-to-end Demo (notebook)](notebooks/07_demo.ipynb)** — the research *journey* (falsification → diagnosis → pivot), the deployable merchandising decision-support **product** (trend lead-time · launch sell-through · co-purchase velocity), and the honest **analysis** (value matrix + gap/serendipity negatives) — 8 presentation-grade figures. Self-contained: [`results/notebooks/07_demo.html`](results/notebooks/07_demo.html).
+
 ---
 
 ## TL;DR — 정직한 결론
@@ -156,6 +158,7 @@ JAX + Flax NNX + Optax | DuckDB + Parquet | BGE-base-en-v1.5 | GPT-4.1-nano (mul
 
 ## Documentation
 
+- [End-to-end Demo](notebooks/07_demo.ipynb) — journey + product + analysis, 8 figures; self-contained HTML at `results/notebooks/07_demo.html`
 - [STORY](docs/research_design/STORY.md) — Falsification → Diagnosis → Pivot → honest scale-refutation (the narrative)
 - [Contribution Notes](docs/research_design/contribution_notes.md) — per-phase contributions + cumulative numbers (canonical-cited)
 - [Enrichment v2 Design](docs/research_design/enrichment_v2_design.md) — interpretable catalog-enrichment value matrix
