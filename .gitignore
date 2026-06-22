@@ -10,6 +10,10 @@ data/
 results/models/
 results/predictions/
 
+# LLM batch API outputs (transient)
+batch_output_*.jsonl
+batch_input_*.jsonl
+
 # Python
 __pycache__/
 *.py[cod]
@@ -41,7 +45,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
-.sync.env
 
 # DVC
 /dvc.lock

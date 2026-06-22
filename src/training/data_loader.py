@@ -101,6 +101,8 @@ def _make_feature_batch_fn(
             "user_num": user_num[u],
             "item_cat": item_cat[i],
             "item_num": item_num[i],
+            "user_idx": u.astype(np.int32),  # consumed only if use_id_embed
+            "item_idx": i.astype(np.int32),
             "labels": labels,
         }
         if item_emb is not None:
@@ -155,6 +157,8 @@ def _make_din_batch_fn(
             "item_num": item_num[i],
             "history": sequences[u],
             "hist_len": seq_lengths[u],
+            "user_idx": u.astype(np.int32),  # harmless: DIN reads named keys only
+            "item_idx": i.astype(np.int32),
             "labels": labels,
         }
         if item_emb is not None:

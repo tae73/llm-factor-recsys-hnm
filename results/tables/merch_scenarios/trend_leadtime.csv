@@ -1,0 +1,11 @@
+category,latest_hot_share,hist_mean_share,share_zscore,share_trend_3mo,latest_month_sales,early_warning
+Divided,0.899,0.4321,2.028,0.2168,345212,high
+Lingeries/Tights,0.9107,0.4601,2.022,0.1966,404460,high
+Ladieswear,0.9128,0.426,1.978,0.2042,736522,high
+Sport,0.7791,0.3179,1.929,0.2239,55986,high
+Menswear,0.8384,0.4373,1.911,0.2721,100933,high
+Ladies Accessories,0.8181,0.4032,1.829,0.1811,97543,high
+Children Sizes 134-170,0.7517,0.496,1.044,0.1669,8422,high
+Baby Sizes 50-98,0.7267,0.4912,0.932,0.1352,6681,elevated
+"Children Accessories, Swimwear",0.7139,0.507,0.819,0.1174,2562,elevated
+Children Sizes 92-140,0.6974,0.5138,0.684,0.234,6186,elevated

@@ -69,9 +69,6 @@ class CrossLayerV2(nnx.Module):
         # Gating network: Linear(d_input → n_experts)
         self.gate = nnx.Linear(d_input, n_experts, rngs=rngs)
 
-        # LayerNorm for numerical stability (prevents residual accumulation explosion)
-        self.layer_norm = nnx.LayerNorm(d_input, rngs=rngs)
-
     def __call__(self, x0: jax.Array, xl: jax.Array) -> jax.Array:
         """Forward: x_{l+1} = x0 ⊙ (MoE(x_l) + b) + x_l.
 
@@ -95,8 +92,7 @@ class CrossLayerV2(nnx.Module):
         expert_out = jnp.sum(gate_weights[:, :, None] * uvx, axis=1)  # (B, D)
 
         # Cross: x0 ⊙ (expert_out + bias) + xl (element-wise product + residual)
-        out = x0 * (expert_out + self.bias[...]) + xl
-        return self.layer_norm(out)
+        return x0 * (expert_out + self.bias[...]) + xl
 
 
 class DCNv2(nnx.Module):
@@ -119,17 +115,37 @@ class DCNv2(nnx.Module):
     ):
         n_fields = len(field_dims)
         d_embed = config.d_embed
+        init = nnx.initializers.normal(stddev=getattr(config, "embed_init_std", 0.05))
 
         # --- Embedding layer (same pattern as DeepFM) ---
         self.cat_embeddings = nnx.List(
-            [nnx.Embed(num_embeddings=dim, features=d_embed, rngs=rngs) for dim in field_dims]
+            [
+                nnx.Embed(num_embeddings=dim, features=d_embed, embedding_init=init, rngs=rngs)
+                for dim in field_dims
+            ]
         )
         self.num_projection = nnx.Linear(
             n_numerical, n_numerical * d_embed, use_bias=False, rngs=rngs
         )
 
-        # Total flattened dimension
-        total_dim = (n_fields + n_numerical) * d_embed
+        # --- Optional per-user / per-item id embeddings (CF capacity) ---
+        use_id_embed = bool(
+            getattr(config, "use_id_embed", False)
+            and getattr(config, "n_users", 0) > 0
+            and getattr(config, "n_items", 0) > 0
+        )
+        self._use_id_embed = use_id_embed
+        n_id_fields = 2 if use_id_embed else 0
+        if use_id_embed:
+            self.user_id_embed = nnx.Embed(
+                num_embeddings=config.n_users, features=d_embed, embedding_init=init, rngs=rngs
+            )
+            self.item_id_embed = nnx.Embed(
+                num_embeddings=config.n_items, features=d_embed, embedding_init=init, rngs=rngs
+            )
+
+        # Total flattened dimension (+2 fields when id embeddings enabled)
+        total_dim = (n_fields + n_numerical + n_id_fields) * d_embed
 
         # --- Cross Network v2 ---
         self.cross_layers = nnx.List(
@@ -176,6 +192,13 @@ class DCNv2(nnx.Module):
         num_embed_list = [num_embeds[:, i, :] for i in range(self._n_numerical)]
 
         all_embeds = cat_embeds + num_embed_list
+
+        # Optional id embeddings: enter cross network + DNN.
+        if self._use_id_embed and x.user_idx is not None and x.item_idx is not None:
+            item_id_e = self.item_id_embed(x.item_idx)  # (B, d_embed)
+            user_id_e = self.user_id_embed(x.user_idx)  # (B, d_embed)
+            all_embeds = all_embeds + [item_id_e, user_id_e]
+
         stacked = jnp.stack(all_embeds, axis=1)
         return stacked
 

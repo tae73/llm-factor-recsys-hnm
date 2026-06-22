@@ -1,0 +1,42 @@
+{
+  "probe": "probe_17_external_discovery",
+  "n_eligible_users": 12000,
+  "coverage_frac": 0.14010835045768727,
+  "n_extracted": 3426,
+  "pool": 5000,
+  "scorers": {
+    "popularity": {
+      "discovery_map": 0.0018989380363982225,
+      "discovery_hr": 0.026938915579958818,
+      "all_map": 0.0017427918810302917,
+      "all_hr": 0.026166666666666668
+    },
+    "L1_profile": {
+      "discovery_map": 0.0026483128158358775,
+      "discovery_hr": 0.023078242964996568,
+      "all_map": 0.0022560379684982857,
+      "all_hr": 0.022416666666666668
+    },
+    "external_profile": {
+      "discovery_map": 0.001039756353132154,
+      "discovery_hr": 0.013555250514756348,
+      "all_map": 0.0009381397450636718,
+      "all_hr": 0.013166666666666667
+    },
+    "blend": {
+      "discovery_map": 0.00210028517076083,
+      "discovery_hr": 0.01956074124914207,
+      "all_map": 0.001912131785412359,
+      "all_hr": 0.019
+    }
+  },
+  "external_vs_L1_discovery": {
+    "delta": -0.001608556462703724,
+    "rel": -0.6073891471903107,
+    "ci": [
+      -0.0021923996679737642,
+      -0.001081409361315148
+    ]
+  },
+  "verdict": "NO-GO — external profile does not beat L1 on user-level discovery; probe_16 (pair-level) is the ceiling"
+}

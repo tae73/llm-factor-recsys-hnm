@@ -106,6 +106,29 @@ class TestBinaryCrossEntropy:
         loss = binary_cross_entropy(logits, labels)
         assert loss.shape == ()
 
+    def test_pos_weight_default_is_unweighted(self):
+        """pos_weight=1.0 must reproduce the unweighted mean exactly."""
+        logits = jnp.array([0.5, -0.5, 1.0, -1.0])
+        labels = jnp.array([1.0, 0.0, 1.0, 0.0])
+        base = binary_cross_entropy(logits, labels)
+        weighted = binary_cross_entropy(logits, labels, pos_weight=1.0)
+        assert abs(float(base) - float(weighted)) < 1e-7
+
+    def test_pos_weight_scales_positive_terms(self):
+        """pos_weight>1 up-weights positive-label loss; equals manual weighted mean."""
+        logits = jnp.array([0.3, -0.7, 0.9, -0.2])
+        labels = jnp.array([1.0, 0.0, 1.0, 0.0])
+        pw = 3.0
+        per = (
+            jnp.maximum(logits, 0) - logits * labels + jnp.log1p(jnp.exp(-jnp.abs(logits)))
+        )
+        weights = jnp.where(labels > 0.5, pw, 1.0)
+        expected = float(jnp.mean(weights * per))
+        got = float(binary_cross_entropy(logits, labels, pos_weight=pw))
+        assert abs(expected - got) < 1e-6
+        # And it must be strictly larger than the unweighted loss (positives present).
+        assert got > float(binary_cross_entropy(logits, labels))
+
 
 # ---------------------------------------------------------------------------
 # DeepFM Model Tests
@@ -163,6 +186,78 @@ class TestDeepFMModel:
         logits = m(inp)
         assert logits.shape == (4,)
         assert jnp.all(jnp.isfinite(logits))
+
+
+# ---------------------------------------------------------------------------
+# ID Embedding Tests (use_id_embed)
+# ---------------------------------------------------------------------------
+
+
+class TestDeepFMIdEmbed:
+    def test_id_embed_disabled_by_default(self, field_dims, n_numerical):
+        """Default config (use_id_embed=False) → no id-embed branch active."""
+        config = DeepFMConfig(d_embed=4, dnn_hidden_dims=(8,), dropout_rate=0.0, use_batch_norm=False)
+        m = DeepFM(field_dims, n_numerical, config, rngs=nnx.Rngs(params=42, dropout=43))
+        assert m._use_id_embed is False
+
+    def test_id_embed_requires_catalog_sizes(self, field_dims, n_numerical):
+        """use_id_embed=True but n_users/n_items=0 → disabled (no crash)."""
+        config = DeepFMConfig(
+            d_embed=4, dnn_hidden_dims=(8,), dropout_rate=0.0, use_batch_norm=False,
+            use_id_embed=True,  # n_users/n_items default 0
+        )
+        m = DeepFM(field_dims, n_numerical, config, rngs=nnx.Rngs(params=42, dropout=43))
+        assert m._use_id_embed is False
+
+    def test_id_embed_distinguishes_identical_metadata(self, field_dims, n_numerical):
+        """Two items with identical metadata but different item_idx → different logits.
+
+        This is the whole point: 93.5% of items are metadata-indistinguishable; id
+        embeddings give them distinct scores.
+        """
+        config = DeepFMConfig(
+            d_embed=8, dnn_hidden_dims=(16, 8), dropout_rate=0.0, use_batch_norm=False,
+            use_id_embed=True, n_users=100, n_items=200,
+        )
+        m = DeepFM(field_dims, n_numerical, config, rngs=nnx.Rngs(params=1, dropout=2))
+        m.eval()
+        inp = DeepFMInput(
+            user_cat=jnp.zeros((2, 3), dtype=jnp.int32),
+            user_num=jnp.zeros((2, 8), dtype=jnp.float32),
+            item_cat=jnp.zeros((2, 5), dtype=jnp.int32),  # identical metadata
+            item_num=jnp.zeros((2, 2), dtype=jnp.float32),
+            user_idx=jnp.array([5, 5], dtype=jnp.int32),  # same user
+            item_idx=jnp.array([7, 42], dtype=jnp.int32),  # DIFFERENT items
+        )
+        logits = m(inp)
+        assert logits.shape == (2,)
+        assert jnp.all(jnp.isfinite(logits))
+        assert abs(float(logits[0]) - float(logits[1])) > 1e-6
+
+    def test_id_embed_gradient_flow(self, field_dims, n_numerical):
+        """Gradients should flow with id embeddings enabled."""
+        config = DeepFMConfig(
+            d_embed=8, dnn_hidden_dims=(16, 8), dropout_rate=0.0, use_batch_norm=False,
+            use_id_embed=True, n_users=100, n_items=200,
+        )
+        m = DeepFM(field_dims, n_numerical, config, rngs=nnx.Rngs(params=1, dropout=2))
+        rng = np.random.default_rng(3)
+        inp = DeepFMInput(
+            user_cat=jnp.array(rng.integers(0, 3, size=(8, 3)), dtype=jnp.int32),
+            user_num=jnp.array(rng.random((8, 8)), dtype=jnp.float32),
+            item_cat=jnp.array(rng.integers(0, 3, size=(8, 5)), dtype=jnp.int32),
+            item_num=jnp.array(rng.random((8, 2)), dtype=jnp.float32),
+            user_idx=jnp.array(rng.integers(0, 100, size=8), dtype=jnp.int32),
+            item_idx=jnp.array(rng.integers(0, 200, size=8), dtype=jnp.int32),
+        )
+        labels = jnp.array(rng.choice([0.0, 1.0], size=8), dtype=jnp.float32)
+
+        def loss_fn(model):
+            return binary_cross_entropy(model(inp), labels)
+
+        _, grads = nnx.value_and_grad(loss_fn)(m)
+        grad_leaves = jax.tree.leaves(grads)
+        assert any(jnp.any(g != 0) for g in grad_leaves if hasattr(g, "shape"))
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 """Unit tests for src/data/splitter module."""
+
 import json
-import tempfile
-from pathlib import Path
 
 import duckdb
 import pytest
@@ -9,6 +8,7 @@ import pytest
 from src.config import FilterConfig, SplitConfig
 from src.data.splitter import (
     build_ground_truth,
+    build_immediate_eval,
     compute_split_statistics,
     filter_customers_by_activity,
     split_transactions_temporal,
@@ -51,9 +51,7 @@ def test_temporal_split_no_leakage(sample_transactions):
     )
 
     # Train should have no dates after 2020-06-30
-    max_train = con.execute(
-        f"SELECT MAX(t_dat) FROM read_parquet('{train_path}')"
-    ).fetchone()[0]
+    max_train = con.execute(f"SELECT MAX(t_dat) FROM read_parquet('{train_path}')").fetchone()[0]
     assert str(max_train) <= "2020-06-30"
 
     # Val should have dates in [2020-07-01, 2020-08-31]
@@ -78,9 +76,7 @@ def test_filter_active_sparse(sample_transactions):
     config = SplitConfig()
     txn_path = sample_transactions / "transactions.parquet"
 
-    train_path, _, _ = split_transactions_temporal(
-        con, txn_path, sample_transactions, config
-    )
+    train_path, _, _ = split_transactions_temporal(con, txn_path, sample_transactions, config)
 
     filter_cfg = FilterConfig(active_min=5, sparse_min=1)
     active_ids, sparse_ids = filter_customers_by_activity(con, train_path, filter_cfg)
@@ -100,9 +96,7 @@ def test_build_ground_truth_dedup(sample_transactions):
     config = SplitConfig()
     txn_path = sample_transactions / "transactions.parquet"
 
-    _, val_path, _ = split_transactions_temporal(
-        con, txn_path, sample_transactions, config
-    )
+    _, val_path, _ = split_transactions_temporal(con, txn_path, sample_transactions, config)
 
     gt = build_ground_truth(con, val_path)
 
@@ -111,6 +105,52 @@ def test_build_ground_truth_dedup(sample_transactions):
         assert len(gt["c001"]) == len(set(gt["c001"]))
 
     con.close()
+
+
+def test_build_immediate_eval_window_only(sample_transactions):
+    """immediate GT covers (train_end, train_end+horizon] only — not the full val."""
+    con = duckdb.connect()
+    config = SplitConfig()
+    txn_path = sample_transactions / "transactions.parquet"
+    # Build the val split so val_transactions.parquet (the immediate source) exists.
+    split_transactions_temporal(con, txn_path, sample_transactions, config)
+    con.close()
+
+    gt_path = build_immediate_eval(
+        processed_dir=sample_transactions,
+        output_dir=sample_transactions,
+        train_end="2020-06-30",
+        horizon_days=7,
+    )
+    assert gt_path.name == "immediate_ground_truth.json"
+    gt = json.loads(gt_path.read_text())
+
+    # Window (2020-06-30, 2020-07-07]: only c001's 2020-07-05 purchase qualifies.
+    assert gt == {"c001": ["0108775015"]}
+    # c002 (2020-07-20) and c003 (2020-07-25) are outside the 7-day horizon.
+    assert "c002" not in gt
+    assert "c003" not in gt
+
+
+def test_build_immediate_eval_horizon_expands(sample_transactions):
+    """A longer horizon captures purchases the 7-day window excludes."""
+    con = duckdb.connect()
+    config = SplitConfig()
+    txn_path = sample_transactions / "transactions.parquet"
+    split_transactions_temporal(con, txn_path, sample_transactions, config)
+    con.close()
+
+    gt_path = build_immediate_eval(
+        processed_dir=sample_transactions,
+        output_dir=sample_transactions,
+        train_end="2020-06-30",
+        horizon_days=31,  # (2020-06-30, 2020-07-31]
+    )
+    gt = json.loads(gt_path.read_text())
+    # Now c002 (2020-07-20) and c003 (2020-07-25) fall inside the window.
+    assert gt["c001"] == ["0108775015"]
+    assert gt["c002"] == ["0108775099"]
+    assert gt["c003"] == ["0108775200"]
 
 
 def test_cold_start_detection(sample_transactions):

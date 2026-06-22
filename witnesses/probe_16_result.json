@@ -1,0 +1,28 @@
+{
+  "probe": "probe_16_external_knowledge",
+  "n_seeds_extracted": 600,
+  "n_eval_pairs": 3606,
+  "scorers": {
+    "popularity": {
+      "hr_at_12": 0.015806988352745424,
+      "mrr": 0.013912512491159842
+    },
+    "L1_cos_sim": {
+      "hr_at_12": 0.21075984470327233,
+      "mrr": 0.10452816250127865
+    },
+    "external_knowledge": {
+      "hr_at_12": 0.2365501941209096,
+      "mrr": 0.1095661165520884
+    }
+  },
+  "external_vs_L1": {
+    "delta": 0.025790349417637273,
+    "rel": 0.12236842105263158,
+    "ci": [
+      0.010253743760399335,
+      0.0413269550748752
+    ]
+  },
+  "verdict": "GO — LLM external styling knowledge beats product-similarity for complementarity (KAR open-world-knowledge premise realized)"
+}

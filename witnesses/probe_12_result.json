@@ -1,0 +1,47 @@
+{
+  "probe": "probe_12_complementarity",
+  "n_pairs": 20000,
+  "results": {
+    "color_harmony_match": {
+      "co_purchase": 0.2991,
+      "random": 0.21875,
+      "diff": 0.08034999999999998,
+      "ci": [
+        0.07233999999999997,
+        0.08940625
+      ],
+      "sig": true
+    },
+    "tone_season_match": {
+      "co_purchase": 0.26885,
+      "random": 0.23685,
+      "diff": 0.03199999999999997,
+      "ci": [
+        0.023648750000000003,
+        0.040852499999999965
+      ],
+      "sig": true
+    },
+    "style_lineage_match": {
+      "co_purchase": 0.1184,
+      "random": 0.06565,
+      "diff": 0.052750000000000005,
+      "ci": [
+        0.04704874999999999,
+        0.0581
+      ],
+      "sig": true
+    },
+    "l3_cosine": {
+      "co_purchase": 0.8490457031041384,
+      "random": 0.8243139208495617,
+      "diff": 0.02473178225457673,
+      "ci": [
+        0.024087048193514395,
+        0.025439462155252713
+      ],
+      "sig": true
+    }
+  },
+  "verdict": "coordination SIGNAL present — co-purchased items share L3 attrs > random (L3 has complementarity value the single-item task ignores)"
+}

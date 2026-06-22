@@ -31,6 +31,14 @@ def main(
     val_end: str = typer.Option("2020-08-31", help="Validation period end date"),
     test_start: str = typer.Option("2020-09-01", help="Test period start date"),
     test_end: str = typer.Option("2020-09-07", help="Test period end date"),
+    eval_horizon_days: int = typer.Option(
+        7, help="Immediate-next-period eval window length in days (after train_end)"
+    ),
+    build_immediate: bool = typer.Option(
+        True,
+        "--build-immediate/--no-build-immediate",
+        help="Build immediate_ground_truth.json for the (train_end, train_end+horizon] window",
+    ),
     verbose: bool = typer.Option(False, help="Print detailed statistics"),
 ) -> None:
     """Run preprocessing pipeline: raw CSV → Parquet → temporal split."""
@@ -41,14 +49,17 @@ def main(
         val_end=val_end,
         test_start=test_start,
         test_end=test_end,
+        eval_horizon_days=eval_horizon_days,
     )
     filter_config = FilterConfig(active_min=active_min)
 
     # Step 1: CSV → Parquet
     preprocess_result = run_preprocessing(paths)
 
-    # Step 2: Temporal split + customer filtering
-    split_result = run_split(output_dir, output_dir, split_config, filter_config)
+    # Step 2: Temporal split + customer filtering (+ optional immediate eval GT)
+    split_result = run_split(
+        output_dir, output_dir, split_config, filter_config, build_immediate=build_immediate
+    )
 
     print("\n=== Split Summary ===")
     print(f"  Train:  {split_result.n_train:>12,} transactions")

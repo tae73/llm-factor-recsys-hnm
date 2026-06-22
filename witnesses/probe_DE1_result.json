@@ -1,0 +1,740 @@
+{
+  "probe": "DE1_attribute_screen",
+  "seed": 42,
+  "n_items": 105494,
+  "list_handling": "primary(first) value for discrimination/predictability; exploded per-purchase for seasonality",
+  "freetext_excluded": [
+    "l1_material_detail",
+    "l2_target_impression"
+  ],
+  "thresholds": {
+    "discrimination_min": 0.55,
+    "top1_share_max": 0.65,
+    "redundant_meta_lift": 0.55,
+    "redundant_l1_lift": 0.55,
+    "behavioral_min": 0.02
+  },
+  "per_attribute": {
+    "l1_material": {
+      "attribute": "l1_material",
+      "layer": "L1",
+      "is_list": false,
+      "n_values": 37,
+      "discrimination": 0.7314,
+      "top1_share": 0.1906,
+      "metadata_predictability": 0.4281,
+      "metadata_acc": 0.5371,
+      "l1_predictability": 0.6941,
+      "nonredundancy": 0.5719,
+      "matched_meta_col": "garment_group_name",
+      "seasonality_cramers_v": 0.0798,
+      "seasonality_meta": 0.1064,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.2637,
+      "sellthrough_meta": 0.2655,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4711,
+      "verdict": "REDUNDANT",
+      "_flags": {
+        "concentrated": false,
+        "redundant": true,
+        "has_behavioral": false
+      }
+    },
+    "l1_closure": {
+      "attribute": "l1_closure",
+      "layer": "L1",
+      "is_list": false,
+      "n_values": 22,
+      "discrimination": 0.6868,
+      "top1_share": 0.3084,
+      "metadata_predictability": 0.4402,
+      "metadata_acc": 0.6129,
+      "l1_predictability": 0.6325,
+      "nonredundancy": 0.5598,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0477,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1789,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4581,
+      "verdict": "REDUNDANT",
+      "_flags": {
+        "concentrated": false,
+        "redundant": true,
+        "has_behavioral": false
+      }
+    },
+    "l1_design_details": {
+      "attribute": "l1_design_details",
+      "layer": "L1",
+      "is_list": true,
+      "n_values": 12040,
+      "discrimination": 0.7423,
+      "top1_share": 0.0728,
+      "metadata_predictability": 0.0541,
+      "metadata_acc": 0.5982,
+      "l1_predictability": 0.2017,
+      "nonredundancy": 0.9459,
+      "matched_meta_col": "product_group_name",
+      "seasonality_cramers_v": 0.2068,
+      "seasonality_meta": 0.0759,
+      "seasonality_excess": 0.1309,
+      "sellthrough_eta": 0.5331,
+      "sellthrough_meta": 0.1561,
+      "sellthrough_excess": 0.377,
+      "behavioral_signal": 0.254,
+      "composite": 0.9575,
+      "verdict": "SALVAGEABLE",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": true
+      }
+    },
+    "l1_slot4": {
+      "attribute": "l1_slot4",
+      "layer": "L1",
+      "is_list": false,
+      "n_values": 28,
+      "discrimination": 0.5818,
+      "top1_share": 0.4583,
+      "metadata_predictability": 0.4833,
+      "metadata_acc": 0.7201,
+      "l1_predictability": 0.5219,
+      "nonredundancy": 0.5167,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0697,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.2149,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.422,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l1_slot5": {
+      "attribute": "l1_slot5",
+      "layer": "L1",
+      "is_list": false,
+      "n_values": 24,
+      "discrimination": 0.5633,
+      "top1_share": 0.3689,
+      "metadata_predictability": 0.6277,
+      "metadata_acc": 0.765,
+      "l1_predictability": 0.643,
+      "nonredundancy": 0.3723,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.1048,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.123,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.3743,
+      "verdict": "REDUNDANT",
+      "_flags": {
+        "concentrated": false,
+        "redundant": true,
+        "has_behavioral": false
+      }
+    },
+    "l1_slot6": {
+      "attribute": "l1_slot6",
+      "layer": "L1",
+      "is_list": false,
+      "n_values": 33,
+      "discrimination": 0.5043,
+      "top1_share": 0.4886,
+      "metadata_predictability": 0.411,
+      "metadata_acc": 0.6988,
+      "l1_predictability": 0.4531,
+      "nonredundancy": 0.589,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0455,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.189,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4203,
+      "verdict": "CONCENTRATED",
+      "_flags": {
+        "concentrated": true,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l1_slot7": {
+      "attribute": "l1_slot7",
+      "layer": "L1",
+      "is_list": false,
+      "n_values": 26,
+      "discrimination": 0.6536,
+      "top1_share": 0.3494,
+      "metadata_predictability": 0.6045,
+      "metadata_acc": 0.7427,
+      "l1_predictability": 0.6128,
+      "nonredundancy": 0.3955,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0577,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1681,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4013,
+      "verdict": "REDUNDANT",
+      "_flags": {
+        "concentrated": false,
+        "redundant": true,
+        "has_behavioral": false
+      }
+    },
+    "l2_style_mood": {
+      "attribute": "l2_style_mood",
+      "layer": "L2",
+      "is_list": true,
+      "n_values": 22,
+      "discrimination": 0.565,
+      "top1_share": 0.4663,
+      "metadata_predictability": 0.4396,
+      "metadata_acc": 0.7009,
+      "l1_predictability": 0.46,
+      "nonredundancy": 0.5604,
+      "matched_meta_col": "index_name",
+      "seasonality_cramers_v": 0.0626,
+      "seasonality_meta": 0.0509,
+      "seasonality_excess": 0.0117,
+      "sellthrough_eta": 0.1489,
+      "sellthrough_meta": 0.5232,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0059,
+      "composite": 0.4508,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l2_occasion": {
+      "attribute": "l2_occasion",
+      "layer": "L2",
+      "is_list": true,
+      "n_values": 13,
+      "discrimination": 0.3405,
+      "top1_share": 0.805,
+      "metadata_predictability": 0.4381,
+      "metadata_acc": 0.8904,
+      "l1_predictability": 0.4416,
+      "nonredundancy": 0.5619,
+      "matched_meta_col": "section_name",
+      "seasonality_cramers_v": 0.0673,
+      "seasonality_meta": 0.0809,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1644,
+      "sellthrough_meta": 0.5844,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.363,
+      "verdict": "CONCENTRATED",
+      "_flags": {
+        "concentrated": true,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l2_perceived_quality": {
+      "attribute": "l2_perceived_quality",
+      "layer": "L2",
+      "is_list": false,
+      "n_values": 4,
+      "discrimination": 0.5231,
+      "top1_share": 0.7273,
+      "metadata_predictability": 0.2327,
+      "metadata_acc": 0.7908,
+      "l1_predictability": 0.2821,
+      "nonredundancy": 0.7673,
+      "matched_meta_col": "section_name",
+      "seasonality_cramers_v": 0.0475,
+      "seasonality_meta": 0.0809,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1375,
+      "sellthrough_meta": 0.5844,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4647,
+      "verdict": "CONCENTRATED",
+      "_flags": {
+        "concentrated": true,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l2_trendiness": {
+      "attribute": "l2_trendiness",
+      "layer": "L2",
+      "is_list": false,
+      "n_values": 4,
+      "discrimination": 0.6126,
+      "top1_share": 0.6381,
+      "metadata_predictability": 0.3074,
+      "metadata_acc": 0.7493,
+      "l1_predictability": 0.2871,
+      "nonredundancy": 0.6926,
+      "matched_meta_col": "section_name",
+      "seasonality_cramers_v": 0.0204,
+      "seasonality_meta": 0.0809,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1112,
+      "sellthrough_meta": 0.5844,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4734,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l2_season_fit": {
+      "attribute": "l2_season_fit",
+      "layer": "L2",
+      "is_list": false,
+      "n_values": 5,
+      "discrimination": 0.7569,
+      "top1_share": 0.5564,
+      "metadata_predictability": 0.4254,
+      "metadata_acc": 0.7451,
+      "l1_predictability": 0.4468,
+      "nonredundancy": 0.5746,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.1972,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0687,
+      "sellthrough_eta": 0.0669,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0343,
+      "composite": 0.5927,
+      "verdict": "SALVAGEABLE",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": true
+      }
+    },
+    "l2_versatility": {
+      "attribute": "l2_versatility",
+      "layer": "L2",
+      "is_list": false,
+      "n_values": 5,
+      "discrimination": 0.5959,
+      "top1_share": 0.6047,
+      "metadata_predictability": 0.2499,
+      "metadata_acc": 0.7035,
+      "l1_predictability": 0.2548,
+      "nonredundancy": 0.7501,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0489,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.0717,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4817,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l3_color_harmony": {
+      "attribute": "l3_color_harmony",
+      "layer": "L3",
+      "is_list": false,
+      "n_values": 8,
+      "discrimination": 0.8139,
+      "top1_share": 0.3311,
+      "metadata_predictability": 1.0,
+      "metadata_acc": 1.0,
+      "l1_predictability": 0.4494,
+      "nonredundancy": 0.0,
+      "matched_meta_col": "colour_group_name",
+      "seasonality_cramers_v": 0.0258,
+      "seasonality_meta": 0.071,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.165,
+      "sellthrough_meta": 0.2221,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.0,
+      "verdict": "REDUNDANT",
+      "_flags": {
+        "concentrated": false,
+        "redundant": true,
+        "has_behavioral": false
+      }
+    },
+    "l3_coordination_role": {
+      "attribute": "l3_coordination_role",
+      "layer": "L3",
+      "is_list": false,
+      "n_values": 6,
+      "discrimination": 0.58,
+      "top1_share": 0.6702,
+      "metadata_predictability": 0.1707,
+      "metadata_acc": 0.7265,
+      "l1_predictability": 0.1775,
+      "nonredundancy": 0.8293,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0341,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.0438,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4936,
+      "verdict": "CONCENTRATED",
+      "_flags": {
+        "concentrated": true,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l3_visual_weight": {
+      "attribute": "l3_visual_weight",
+      "layer": "L3",
+      "is_list": false,
+      "n_values": 5,
+      "discrimination": 0.5671,
+      "top1_share": 0.51,
+      "metadata_predictability": 0.41,
+      "metadata_acc": 0.7109,
+      "l1_predictability": 0.4204,
+      "nonredundancy": 0.59,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0855,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.0733,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4373,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l3_style_lineage": {
+      "attribute": "l3_style_lineage",
+      "layer": "L3",
+      "is_list": true,
+      "n_values": 45,
+      "discrimination": 0.76,
+      "top1_share": 0.1482,
+      "metadata_predictability": 0.4048,
+      "metadata_acc": 0.493,
+      "l1_predictability": 0.4243,
+      "nonredundancy": 0.5952,
+      "matched_meta_col": "index_name",
+      "seasonality_cramers_v": 0.0841,
+      "seasonality_meta": 0.0509,
+      "seasonality_excess": 0.0331,
+      "sellthrough_eta": 0.3797,
+      "sellthrough_meta": 0.5232,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0166,
+      "composite": 0.5464,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l3_slot6": {
+      "attribute": "l3_slot6",
+      "layer": "L3",
+      "is_list": false,
+      "n_values": 25,
+      "discrimination": 0.7124,
+      "top1_share": 0.2743,
+      "metadata_predictability": 0.3759,
+      "metadata_acc": 0.5471,
+      "l1_predictability": 0.3906,
+      "nonredundancy": 0.6241,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0447,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1603,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.4808,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l3_slot7": {
+      "attribute": "l3_slot7",
+      "layer": "L3",
+      "is_list": false,
+      "n_values": 19,
+      "discrimination": 0.7227,
+      "top1_share": 0.2849,
+      "metadata_predictability": 0.2892,
+      "metadata_acc": 0.4917,
+      "l1_predictability": 0.2922,
+      "nonredundancy": 0.7108,
+      "matched_meta_col": "product_type_name",
+      "seasonality_cramers_v": 0.0497,
+      "seasonality_meta": 0.1285,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.1447,
+      "sellthrough_meta": 0.2683,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.5045,
+      "verdict": "WEAK",
+      "_flags": {
+        "concentrated": false,
+        "redundant": false,
+        "has_behavioral": false
+      }
+    },
+    "l3_tone_season": {
+      "attribute": "l3_tone_season",
+      "layer": "L3",
+      "is_list": false,
+      "n_values": 6,
+      "discrimination": 0.884,
+      "top1_share": 0.3901,
+      "metadata_predictability": 1.0,
+      "metadata_acc": 1.0,
+      "l1_predictability": 0.336,
+      "nonredundancy": 0.0,
+      "matched_meta_col": "colour_group_name",
+      "seasonality_cramers_v": 0.0571,
+      "seasonality_meta": 0.071,
+      "seasonality_excess": 0.0,
+      "sellthrough_eta": 0.09,
+      "sellthrough_meta": 0.2221,
+      "sellthrough_excess": 0.0,
+      "behavioral_signal": 0.0,
+      "composite": 0.0,
+      "verdict": "REDUNDANT",
+      "_flags": {
+        "concentrated": false,
+        "redundant": true,
+        "has_behavioral": false
+      }
+    }
+  },
+  "ranked": [
+    "l1_design_details",
+    "l2_season_fit",
+    "l3_style_lineage",
+    "l3_slot7",
+    "l3_coordination_role",
+    "l2_versatility",
+    "l3_slot6",
+    "l2_trendiness",
+    "l1_material",
+    "l2_perceived_quality",
+    "l1_closure",
+    "l2_style_mood",
+    "l3_visual_weight",
+    "l1_slot4",
+    "l1_slot6",
+    "l1_slot7",
+    "l1_slot5",
+    "l2_occasion",
+    "l3_color_harmony",
+    "l3_tone_season"
+  ],
+  "summary": {
+    "SALVAGEABLE": [
+      "l1_design_details",
+      "l2_season_fit"
+    ],
+    "CONCENTRATED": [
+      "l3_coordination_role",
+      "l2_perceived_quality",
+      "l1_slot6",
+      "l2_occasion"
+    ],
+    "REDUNDANT": [
+      "l1_material",
+      "l1_closure",
+      "l1_slot7",
+      "l1_slot5",
+      "l3_color_harmony",
+      "l3_tone_season"
+    ],
+    "WEAK": [
+      "l3_style_lineage",
+      "l3_slot7",
+      "l2_versatility",
+      "l3_slot6",
+      "l2_trendiness",
+      "l2_style_mood",
+      "l3_visual_weight",
+      "l1_slot4"
+    ]
+  },
+  "gaps": {
+    "per_axis": [
+      {
+        "axis": "material / fabric",
+        "serving_attrs": [
+          "l1_material"
+        ],
+        "best_verdict": "REDUNDANT",
+        "max_discrimination": 0.7314,
+        "status": "REDUNDANT-COLLAPSE"
+      },
+      {
+        "axis": "cut / silhouette (fine)",
+        "serving_attrs": [
+          "l1_slot6",
+          "l3_slot6",
+          "l3_slot7"
+        ],
+        "best_verdict": "WEAK",
+        "max_discrimination": 0.7227,
+        "status": "WEAK/REDESIGN"
+      },
+      {
+        "axis": "neckline / sleeve detail",
+        "serving_attrs": [
+          "l1_slot4",
+          "l1_slot5",
+          "l1_design_details"
+        ],
+        "best_verdict": "SALVAGEABLE",
+        "max_discrimination": 0.7423,
+        "status": "COVERED"
+      },
+      {
+        "axis": "color harmony / palette",
+        "serving_attrs": [
+          "l3_color_harmony",
+          "l3_tone_season"
+        ],
+        "best_verdict": "REDUNDANT",
+        "max_discrimination": 0.884,
+        "status": "REDUNDANT-COLLAPSE"
+      },
+      {
+        "axis": "style mood / aesthetic",
+        "serving_attrs": [
+          "l2_style_mood",
+          "l3_style_lineage"
+        ],
+        "best_verdict": "WEAK",
+        "max_discrimination": 0.76,
+        "status": "WEAK/REDESIGN"
+      },
+      {
+        "axis": "occasion (fine-grained)",
+        "serving_attrs": [
+          "l2_occasion"
+        ],
+        "best_verdict": "CONCENTRATED",
+        "max_discrimination": 0.3405,
+        "status": "REDUNDANT-COLLAPSE"
+      },
+      {
+        "axis": "seasonality",
+        "serving_attrs": [
+          "l2_season_fit"
+        ],
+        "best_verdict": "SALVAGEABLE",
+        "max_discrimination": 0.7569,
+        "status": "COVERED"
+      },
+      {
+        "axis": "perceived quality / value-tier",
+        "serving_attrs": [
+          "l2_perceived_quality"
+        ],
+        "best_verdict": "CONCENTRATED",
+        "max_discrimination": 0.5231,
+        "status": "REDUNDANT-COLLAPSE"
+      },
+      {
+        "axis": "trend-phase / hype-cycle",
+        "serving_attrs": [
+          "l2_trendiness"
+        ],
+        "best_verdict": "WEAK",
+        "max_discrimination": 0.6126,
+        "status": "WEAK/REDESIGN"
+      },
+      {
+        "axis": "wardrobe-role / outfit-slot",
+        "serving_attrs": [
+          "l3_coordination_role",
+          "l2_versatility"
+        ],
+        "best_verdict": "WEAK",
+        "max_discrimination": 0.5959,
+        "status": "WEAK/REDESIGN"
+      },
+      {
+        "axis": "visual weight / proportion",
+        "serving_attrs": [
+          "l3_visual_weight"
+        ],
+        "best_verdict": "WEAK",
+        "max_discrimination": 0.5671,
+        "status": "WEAK/REDESIGN"
+      }
+    ],
+    "weak_or_collapsed_axes": [
+      "material / fabric",
+      "cut / silhouette (fine)",
+      "color harmony / palette",
+      "style mood / aesthetic",
+      "occasion (fine-grained)",
+      "perceived quality / value-tier",
+      "trend-phase / hype-cycle",
+      "wardrobe-role / outfit-slot",
+      "visual weight / proportion"
+    ],
+    "missing_decision_axes": [
+      "trend-phase / hype-cycle (vs static 'Current/Classic')",
+      "price-tier / value-perception (real $ tier, not 1-5 quality)",
+      "fine-grained occasion (work/date/gym/formal — not 88% 'Everyday')",
+      "outfit-pairing / co-purchase role (data-driven, not LLM-guessed 'Foundation')",
+      "body-fit / size-intent (oversized/true-to-size/petite)",
+      "care / practicality (machine-wash, wrinkle, durability)"
+    ]
+  }
+}

@@ -1,0 +1,275 @@
+{
+  "reports": [
+    {
+      "dimension": "feature-data",
+      "findings": [
+        {
+          "issue": "Item feature representations have severe collisions - 105,542 items collapsed to only 17,255 unique categorical combinations, with up to 271 identical items per combination",
+          "evidence": "src/features/engineering.py:222-305 computes only 5 categorical + 2 numerical features per item. Analysis of data/features/item_features.npz shows: 17,255 unique categorical combos / 105,542 items (16.3% unique). With popularity bucketing, only 32,164 distinct patterns exist. 15,382 collision groups contain 2+ items, max collision size=271 items.",
+          "category": "design",
+          "severity": "high",
+          "fix": "Add article_id embedding layer (105,542 × d_embed, e.g., 16) to DeepFM to break item collisions and enable personalized item preference learning. Current architecture cannot distinguish between items with identical metadata features."
+        },
+        {
+          "issue": "Numerical features stored raw (unbounded counts) then normalized at training time only, not persisted. Raw feature ranges: user n_purchases [1, 1649], item total_purchases [0, 44761], creating extreme outliers post-normalization.",
+          "evidence": "src/features/engineering.py:122-133 stores user numerical raw (dtype=float32, no normalization). src/features/engineering.py:272-279 stores item numerical raw. src/training/trainer.py:714-721 applies z-score normalization at train time: mu=269.1, sigma=724.3 for item total_purchases → z-score range [-0.37, 61.43]. Raw values never saved to disk.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Decide: (1) persist normalized features to .npz files (recommended for reproducibility), or (2) document that raw features require runtime normalization and verify normalization is applied identically during validation/test inference. Current approach works but is fragile."
+        },
+        {
+          "issue": "Negative sampling is uniform-random over catalog, creating artificial class imbalance that doesn't reflect real ranking task distribution. All items uniformly sampled in negatives (923 ± 30 appearances each) regardless of popularity.",
+          "evidence": "src/features/engineering.py:376-385 uses rng.integers(0, n_items) to sample negatives, uniform across catalog. data/features/train_pairs.npz analysis: 105,542 items all appear in negatives, ~924 times each. Top item 0706016001 (44,761 purchases) sampled only 885 times in negatives. Collides with design flaw #1: indistinguishable items in uniform negatives compound the degeneracy.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Consider popularity-aware negative sampling: sample negatives with probability proportional to item popularity (or learned difficulty). This aligns train task with real ranking (where popular items dominate) and provides harder negatives to learn meaningful item discriminations."
+        },
+        {
+          "issue": "Item categorical features are too coarse to distinguish items. Only 5 categorical columns (product_type_name, color, garment_group, section, index) with small vocabularies (max 132 unique values) cannot uniquely identify 105,542 distinct SKUs in H&M's product catalog.",
+          "evidence": "src/features/engineering.py:66-72 defines ITEM_CAT_NAMES. data/features/feature_meta.json shows vocab sizes: product_type_name=132, colour_group_name=51, garment_group_name=22, section_name=57, index_name=11. Theoretical max combinations: 132×51×22×57×11 ≈ 93M, but only 17,255 combos exist in 105,542 items. Many SKUs share identical metadata.",
+          "category": "design",
+          "severity": "high",
+          "fix": "Add article_id as primary identifier embedding (as above) OR augment categorical features with product size, material, seasonal attributes from articles table (if available). Without unique item identity, metadata-only features cannot support personalized recommendations."
+        },
+        {
+          "issue": "Temporal leakage verified CLEAN at feature engineering stage, but document this explicitly.",
+          "evidence": "src/features/engineering.py:427 explicitly uses 'data_dir / train_transactions.parquet' (not full dataset). Verified: train split max_date=2020-06-30, val split min_date=2020-07-01 (clean boundary). User and item features computed train-only per engineering.py:102-133, 235-244.",
+          "category": "ok",
+          "severity": "low",
+          "fix": "No fix needed. Add assertion in run_feature_engineering() to confirm train_path is actually the train split, not full data, to prevent future regressions."
+        },
+        {
+          "issue": "Numerical feature normalization is correct (z-score applied consistently at train time), but this design relies on runtime computation rather than persisting normalized features. Risk of mismatch during inference if normalization params change.",
+          "evidence": "src/training/trainer.py:714-721 computes normalization stats per batch at train time: mu=num.mean(axis=0), sigma=num.std(axis=0)+1e-8. No saved scaling parameters (mean/std) to disk for reproducible inference. If running inference later, must recompute or hardcode stats.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Persist feature statistics (mean, std per column) to feature_meta.json or separate stats.json. Modify data_loader and inference pipelines to apply saved stats consistently across train/val/test."
+        },
+        {
+          "issue": "DeepFM achieves MAP@12=0.001773 vs baseline 0.003783 (47% worse) due to fundamental feature representation limitation, not training/data bugs. Item feature collisions prevent model from learning meaningful item-level interactions required for ranking personalization.",
+          "evidence": "Manual baseline evaluation: top-12 popularity achieves MAP@12=0.003783, HR@12=0.044994 (confirmed from src/baselines/popularity.py). DeepFM reported 0.001773. Root cause: 16.3% unique categorical fingerprints + uniform negatives + missing item embeddings = model cannot distinguish items → collapses to predicting same score for collided items → baseline-like behavior.",
+          "category": "metric-framing",
+          "severity": "high",
+          "fix": "Swap item feature strategy: ADD article_id embeddings (105,542 × 16, ~1.7M params) to uniquely identify SKUs. This unlocks item-level personalization. Expect MAP improvement to 0.005-0.010+ (above baseline) once item identity is resolved. Current 'metadata-only' framing is fundamentally insufficient for this 100k+ item catalog."
+        }
+      ],
+      "summary": "DeepFM severely underperforms baseline (MAP@12: 0.001773 vs 0.003783) due to DESIGN, not bugs. Root cause: (1) **Item feature collapse**: only 17,255 unique categorical combinations for 105,542 items; up to 271 items per collision are feature-identical, preventing model from learning item-specific preferences. (2) **Missing article_id embeddings**: metadata features alone (5 categorical + 2 numerical) insufficient to distinguish H&M's SKU catalog; baseline-equivalent behavior emerges when items are indistinguishable. (3) **Uniform-random negative sampling**: compounds #1 by not providing harder negatives that would expose item distinctions. Temporal leakage is CLEAN (train/val properly split), feature normalization is CORRECT (z-score applied at runtime), and negative sampling is technically sound but strategically misaligned. **FIX: Add article_id embedding layer + optionally use popularity-aware negative sampling.** Without unique item identity, metadata-only recommendation at 100k+ item scale cannot beat popularity baseline."
+    },
+    {
+      "dimension": "modeling",
+      "findings": [
+        {
+          "issue": "Severe item-level embedding collapse: 79.4% of items (83,829/105,542) clustered into groups sharing identical categorical metadata",
+          "evidence": "src/features/engineering.py:281-296 (item categorical encoding); data analysis: 17,255 distinct item_cat combos vs 105,542 items; 4,814 clusters with 5+ items, max cluster 549 items. Empirically: items with same (product_type, colour_group, garment_group, section, index) have IDENTICAL categorical embeddings → identical first_order_cat contribution + identical FM user-cat interaction terms (for fixed user).",
+          "category": "design",
+          "severity": "high",
+          "fix": "DeepFM backbone cannot discriminate among items in same metadata cluster. Two mitigation paths: (1) add per-item unique identifier (item_id embedding, like LightGCN), breaking category-only constraint; (2) ensure KAR fusion heavily weights BGE per-item embeddings (768D continuous) over collapsed categorical features (112D, 79.4% discrete). Currently KAR F2 fusion uses α·proj(e_aug) + backbone, with α_init=0.1 (src/kar/fusion.py:68) — may be insufficient if backbone embedding is contaminated by collapse."
+        },
+        {
+          "issue": "Total_purchases feature unnormalized and rank-deficient in FM pathway: raw range [0, 44761] with 166x spread enters via rank-2 num_projection bottleneck",
+          "evidence": "src/models/deepfm.py:71 (num_projection: Linear(10, 32)); src/features/engineering.py:279 (nan_to_num applied but no normalization); data: total_purchases min=0, max=44761, mean=269, std=724. num_projection maps 10D input to 32D, giving max rank 2 in that space for the 2 numerical inputs. For items sharing cat combo, FM second-order distinguishing power limited to num_proj interactions (rank-2 subspace).",
+          "category": "design",
+          "severity": "high",
+          "fix": "Normalize numerical features (z-score or min-max to [0,1]) before model input. This levels the playing field between item-level signals (total_purchases, avg_price) and user-level signals (n_purchases 0-1649, avg_price 0-0.51, etc.). Currently, huge unnormalized scales can cause gradient flow imbalance, making FM/DNN learn spurious weight hierarchies. Verify: inspect first_order_num.weight[0] (total_purchases coefficient) post-training to see if it's actually learning to rank by popularity."
+        },
+        {
+          "issue": "First-order linear component insufficient to express monotone popularity ranking: enters as 1 component among 4 (bias + first_order + fm_second + dnn_out), obscured by FM/DNN expressiveness",
+          "evidence": "src/models/deepfm.py:104-110 (first_order structure); lines 136-154 (predict_from_embedding combines 4 terms additively). First-order_num is Linear(10, 1), so for fixed user, first_order_num_contrib = W @ [user_num, item_num] + b, which IS linear in total_purchases. But this scalar term is summed with: (1) bias (scalar), (2) FM second-order (scalar, from rank-2 num space for same-cat items), (3) DNN output (from 256-hidden networks). DNN alone has ~122k parameters and can easily overfit. Empirically: DeepFM MAP@12=0.001773 << Popularity MAP@12=0.003783, meaning DeepFM LEARNS WRONG RANKING despite having the true signal available.",
+          "category": "design",
+          "severity": "high",
+          "fix": "Add auxiliary supervision or explicit item bias term. Options: (1) pre-train backbone on item popularity prediction (predict total_purchases) before adding user interactions; (2) use a learnable item bias vector (n_items,) initialized from popularity scores, frozen during training (forces lower bound on item preference); (3) regularize DNN output magnitude relative to first_order, preventing overparameterization from drowning out the simple linear signal. Measure: track first_order_num coefficient (W[0]) during training; it should remain positive and grow if model is learning to use popularity."
+        },
+        {
+          "issue": "KAR fusion (F2 addition) may not overcome metadata backbone bottleneck: default α_init=0.1 for blending 64D expert output into 112D backbone may be too weak when 79.4% of items are feature-collapsed",
+          "evidence": "src/kar/fusion.py:56-82 (F2AdditionFusion: x_augmented = x_backbone + α*proj(e_aug)); src/kar/hybrid.py:107 (fusion call). KAR expert output e_aug is 64D (src/config.py:413, d_rec=64), projected to d_backbone=112D, then scaled by α. With α=0.1, expert contribution is 10% of backbone. For feature-collapsed item clusters, backbone embedding is redundant (same value for 5+ items). KAR must overpower this via expert embeddings (768D BGE per-item, theoretically discriminative). But (1) projection 64D → 112D expands representation, (2) α=0.1 blending is conservative, (3) no guarantee backbone doesn't learn to ignore expert signal.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Test KAR fusion variants: (1) increase α_init to 0.5 or learnable (currently fixed at 0.1); (2) use F3 gated or F4 cross-attention fusion to allow per-element/per-batch weighting of expert vs backbone; (3) measure gating distribution post-training (G2 gate_linear output) to see if experts are actually being weighted; (4) validate that BGE embeddings are indeed per-item distinct (may have bucketing/caching issues). Without these checks, KAR may fail to restore item-level granularity despite having 768D item embeddings available."
+        },
+        {
+          "issue": "Numerical feature encoding not suitable for learning popularity: 2D numerical input (total_purchases, avg_price) projected via Linear(10→32) then reshaped to (2, 16) for FM embeddings, but rank constraint prevents expressing complex popularity interactions",
+          "evidence": "src/models/deepfm.py:71, 114-118 (num_projection: Linear(n_numerical, n_numerical*d_embed)); d_embed=16, n_numerical=10, so output is (B, 160) reshaped to (B, 10, 16). For item_num only (last 2 of 10), this is (B, 2, 16) = 32D. Linear(2, 32) has rank ≤ 2. In FM, the rank-2 constraint means num_embed can only span 2D subspace of embedding space. This fundamentally limits how complex an interaction pattern FM can learn over total_purchases and avg_price.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Increase d_embed for numerical features or use item_id embeddings. Alternatively: treat total_purchases specially, add explicit polynomial features (log, sqrt, quantile buckets), or use a separate learned popularity bias term e_i (n_items,) that's directly optimized. Verify via ablation: train DeepFM with item_id embedding (like LightGCN) vs without, measure improvement. If large, confirms that metadata-only capacity is the bottleneck."
+        },
+        {
+          "issue": "KAR architecture assumes backbone provides meaningful item-level signal to augment, but metadata-only DeepFM backbone doesn't—KAR may be fixing a symptom (missing granularity) rather than root cause (collapsed embeddings)",
+          "evidence": "src/kar/hybrid.py:152-158 (_backbone_embed flattens DeepFM stacked embeddings to 112D); src/kar/fusion.py line 81 (x_backbone + α*proj(e_aug)). KAR treats backbone as a feature extractor and blends in expert knowledge. But if backbone embeddings are identical for 83,829 items (79.4%), then for those items, KAR is starting from a poisoned representation. Expert output e_fact (768→64D) is unique per-item, but fusion projects 64D → 112D and adds to backbone. If backbone already encoded wrong ranking (item clusters ordered randomly), expert must fight an uphill battle to reorder them. Better approach: fix backbone first (add item_id) or use pure KAR (ignore metadata backbone, learn directly from BGE).",
+          "category": "design",
+          "severity": "high",
+          "fix": "Diagnostic: train KAR with F1 concat fusion instead of F2 addition (doubles backbone dim to 224D, making expert contribution harder to ignore). If concat fusion outperforms addition fusion, confirms that experts are being swamped by backbone. Second: measure expert gating distribution (G2 gate_linear output softmax). If reasoning_expert consistently weighted >0.5, suggests model is learning to rely on user BGE (ignoring item metadata). If balanced near 0.5, suggests experts are competing equally (bad signal from both). Both outcomes inform whether KAR is actually leveraging its 768D item embeddings or just patching a broken backbone."
+        },
+        {
+          "issue": "No explicit validation that total_purchases is being learned as a scoring feature: first_order_num.weight is never inspected post-training, and DeepFM fails to beat trivial Popularity baseline, suggesting first_order signal is either wrong sign or swamped",
+          "evidence": "src/training/trainer.py (train_step computes loss but doesn't log component magnitudes); src/baselines/popularity.py (global popularity is simple aggregate, DeepFM still fails to match it). DeepFM MAP@12=0.001773 vs Popularity MAP@12=0.003783 (2.13x worse). This is a strong signal that the model is learning ANTI-popularity ranking or random ranking. First-order_num should be learning W @ total_purchases ≈ positive coefficient if model were rational, but likely W[0] is small, negative, or being overridden by FM/DNN.",
+          "category": "metric-framing",
+          "severity": "high",
+          "fix": "Add detailed logging during training: (1) extract first_order_num.weight before/after each epoch, log W[0] (total_purchases coefficient); (2) compute full-catalog scoring for a sample user, extract component contributions (bias_out, first_order_out, fm_second_out, dnn_out), measure if they're aligned (all positively correlated with total_purchases); (3) plot top-10 predictions vs ground truth for validation users, check if model is learning any reasonable ranking. Without this instrumentation, it's impossible to diagnose whether the problem is architectural (embeddings) or training (optimization/loss)."
+        },
+        {
+          "issue": "KAR design assumes metadata backbone is weak but valid; if backbone is incorrect (anti-popularity), KAR may amplify errors via alignment loss (src/losses.py:70-83), which tries to make experts match a corrupted target",
+          "evidence": "src/losses.py:137-139 (align_loss makes e_fact ≈ x_backbone_item_embed, e_reason ≈ x_backbone_user_embed). In src/training/trainer.py (KAR training stage 2/3), align_loss is weighted at 0.1 (src/config.py:440, align_weight=0.1). If DeepFM backbone produces wrong rankings (confirmed: MAP@12 50% worse than Popularity), then alignment loss will pull experts toward that wrong ranking. Experts trained on BGE embeddings (which may contain genuine item semantics) are forced to match backbone's spurious learned features.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Consider training KAR experts without alignment loss (alignment_weight=0.0) initially, letting them learn from BGE + user reasoning independently. If that performs better, confirms alignment loss is harmful. Alternatively: use ground-truth item popularity (total_purchases) as align target instead of backbone embedding, creating a supervision signal that's independent of a broken backbone."
+        }
+      ],
+      "summary": "DeepFM metadata-only backbone has SEVERE modeling capacity constraints that explain its 53% performance loss vs Popularity baseline: (1) **Item-level embedding collapse**: 79.4% of items (83,829/105,542) share identical categorical metadata, creating clusters where items differ only in 2D numerical features (total_purchases, avg_price). (2) **Total_purchases bottleneck**: unnormalized raw values [0–44761] enter via rank-2 num_projection, limiting FM's ability to express complex popularity patterns. (3) **First-order insufficient**: linear total_purchases component is 1 of 4 additive terms and gets drowned by highly expressive DNN (122k parameters), causing model to learn anti-popularity or random ranking. (4) **KAR augmentation risk**: while per-item BGE embeddings (768D) offer potential to restore granularity, F2 addition fusion with α=0.1 may be too weak to overcome backbone's collapsed embeddings, and alignment loss may pull experts toward a corrupted target. **Diagnosis needed**: (a) log first_order_num.weight during training to verify if popularity signal is being learned; (b) measure distinct scores per fixed user × full catalog to quantify embedding collapse; (c) inspect gating weights and fusion α post-training to confirm KAR experts are being used; (d) validate that BGE embeddings are per-item discriminative (not bucketed/deduplicated). **Root cause**: design flaw—metadata features (5 categorical fields) are insufficient to distinguish 105K items; adding item_id embedding (like LightGCN) or relying purely on KAR's BGE would be more appropriate."
+    },
+    {
+      "dimension": "training",
+      "findings": [
+        {
+          "issue": "FM second-order path lacks output normalization, causing initialization variance explosion",
+          "evidence": "src/models/deepfm.py:137-140. FM computation: sum_of_embeds ~ N(0,4.2), sum_squared-squared_sum has variance ~2500 (50^2). Std[fm_second] ≈ 50 per sample. DNN path is normalized by BatchNorm layers (output ~ N(0,2.5)), but FM path is not scaled. Combined logit variance ~ 2500, dwarfing the ~0.7 scale needed for pos/neg separation.",
+          "category": "bug",
+          "severity": "high",
+          "fix": "Add FM output scaling: scale fm_second by 1/sqrt(n_fields*d_embed) = 1/sqrt(288) ≈ 0.059, or apply LayerNorm after FM component. This normalizes initialization to same scale as DNN path (~O(1)). Alternatively, reduce d_embed or apply embedding layer normalization (divide embeddings by sqrt(d_embed))."
+        },
+        {
+          "issue": "BCE loss on 1:4 pos:neg ratio with high-variance initialization masks learning signal",
+          "evidence": "src/losses.py:13-27, src/training/trainer.py:183-193. With 121.8M pairs (20% pos, 80% neg) and random FM initialization (Std≈50), gradient signal is dominated by random FM variations rather than systematic pos/neg differences. At logit=0, pos and neg samples have identical BCE loss (0.693), so gradients nearly cancel. Signal-to-noise ratio for learning pos>neg is extremely poor when logit variance >> 1.",
+          "category": "bug",
+          "severity": "high",
+          "fix": "Normalize embeddings at initialization. Divide all Embed layer outputs by sqrt(d_embed) or use Xavier/Glorot initialization. This reduces initialization variance from ~50 to ~3, making gradient signal 16x clearer relative to noise."
+        },
+        {
+          "issue": "Missing initialization scaling for embedding layers in Flax NNX",
+          "evidence": "src/models/deepfm.py:60-71. nnx.Embed and nnx.Linear use default Flax initialization (lecun_normal) with no kernel_init override and no explicit embedding scaling. For FM, this is particularly problematic: (n_fields=18 * d_embed=16 = 288)-dimensional input means embedding outputs are sampled from N(0,1) distributions that sum to extremely large variance.",
+          "category": "bug",
+          "severity": "high",
+          "fix": "Add kernel_init parameter to nnx.Embed(..., kernel_init=jax.nn.initializers.uniform(scale=0.01)) and scale embeddings after lookup: emb_output / sqrt(d_embed). Or use a custom initializer that accounts for downstream summation (e.g., scale by 1/sqrt(n_fields))."
+        },
+        {
+          "issue": "BCE loss does not weight positive/negative samples; imbalanced 1:4 ratio may cause model to collapse to negative probability",
+          "evidence": "src/losses.py:13-27. binary_cross_entropy computes mean loss across all samples (pos and neg), but with 80% negatives, model can achieve 0.693 loss by predicting ~0.5 for all samples. Gradient pushes equally to match empirical frequency (20% pos), not to rank pos > neg. At logit~0, all samples have identical loss and near-zero gradient spread across dimensions.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Add pos_weight parameter to BCE: loss = mean(pos_mask * loss_pos * pos_weight + neg_mask * loss_neg). Set pos_weight = 4 (neg:pos ratio) to balance gradient magnitude. Alternatively, use sample-level weighting: w_i = 4 if label_i=1 else 1."
+        },
+        {
+          "issue": "Model evaluation (MAP@12) measures full-catalog ranking, but training objective (BCE) optimizes per-pair discrimination",
+          "evidence": "src/training/trainer.py:540-541, src/evaluation/metrics.py:22-42. Training uses binary_cross_entropy on (user, item) pairs with random negatives (1:4 ratio). Validation scores all n_items for each user and computes rank-based MAP@12. These objectives are misaligned: BCE can be minimized by learning item-level popularity (since popular items appear in more positive pairs), not user-item affinity. See data summary: 99.98% sparsity, Gini=0.7586 (top 20.7% items = 80% transactions), 87% single-purchase users. Popularity baseline achieves MAP@12=0.003783, DeepFM gets 0.001773.",
+          "category": "metric-framing",
+          "severity": "high",
+          "fix": "The current setup expects a model to learn user-item affinity from sparse metadata alone (user_cat, item_cat, user_num, item_num). With 99.98% sparsity and no ID embeddings, full-catalog ranking is dominated by item-level features. Consider: (1) Measure training loss on validation set to verify model is learning (check if val loss < train loss). (2) Replace BCE with a ranking loss (e.g., Bayesian Personalized Ranking, BPR, or learned-to-rank). (3) Evaluate on ranking metrics during training (e.g., NDCG@12 on validation set), not just val loss. (4) Add user/item ID embeddings to break popularity symmetry (currently all items with same metadata have identical scores)."
+        },
+        {
+          "issue": "DeepFM uses only metadata features; items indistinguishable except by sparse (cat, num) attributes",
+          "evidence": "src/models/deepfm.py:1-10, confirmed in DIMENSION setup. User features: (age_group, club_member_status, fashion_news_frequency, 8 numericals). Item features: (product_type_name, colour_group_name, garment_group_name, section_name, index_name, total_purchases, avg_price). With 105K items and 5 categorical + 2 numeric features, vocabulary coverage is low (e.g., product_type_name has ~132 values, colour_group_name ~51). Items sharing metadata are indistinguishable; DeepFM cannot learn item-specific preferences. Popularity baseline exploits total_purchases directly.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "This is a configuration issue, not a bug. Metadata-only DeepFM is intentionally limited. To improve: add item/user ID embeddings (d=16), or increase feature richness (product category hierarchies, seasonality, inventory levels). Alternatively, accept that metadata-only models have ~0.002 MAP ceiling for this dataset and use baselines as comparison target."
+        },
+        {
+          "issue": "Train/eval mode toggle in scoring (model.eval() -> predict_proba -> model.train()) may have inconsistent behavior with BatchNorm",
+          "evidence": "src/training/trainer.py:393-395, 576-592. Model calls model.eval() before scoring (validation), then predict_proba, then model.train(). Flax NNX BatchNorm tracks running_mean/running_variance during training; during eval, it uses these statistics for normalization. If training run is short or BatchNorm statistics are not properly initialized, eval normalization may be inconsistent. Additionally, Dropout is disabled in eval mode (correct), but BatchNorm gamma/beta learn-able parameters may not have converged.",
+          "category": "ok",
+          "severity": "low",
+          "fix": "Verify BatchNorm statistics are stable: (1) print mean and std of post-BatchNorm activations during training to confirm normalization is working. (2) Check if removing use_batch_norm=True from config improves performance (rule out BatchNorm init/tracking issues). (3) Ensure model.eval() actually disables BatchNorm training mode (check Flax NNX documentation for correct implementation)."
+        }
+      ],
+      "summary": "DeepFM severely underperforms (MAP@12=0.00177 vs Popularity=0.00378) due to THREE compounding training dynamics bugs: (1) FM second-order component has initialization variance ~50x larger than DNN path, overwhelming gradient signal for learning pos/neg separation; (2) BCE loss on 1:4 imbalanced data without pos_weight causes model to trivialize loss by predicting near-baseline frequencies rather than ranking; (3) Training objective (BCE discrimination) misaligned with evaluation objective (ranking MAP@12). Additionally, metadata-only feature set (no ID embeddings) limits discriminative capacity. The root cause is not model capacity but initialization/loss-objective mismatch: with Std[logit]~50 at init, early gradients are dominated by FM noise, not real pos/neg signal. Model converges to near-random assignment matching dataset frequency, matching Popularity baseline loss without learning affinity structure."
+    },
+    {
+      "dimension": "eval-fairness",
+      "findings": [
+        {
+          "issue": "Cold-start user filtering creates apples-to-oranges comparison: DeepFM evaluated on 88.7% of users, Popularity evaluated on 100%",
+          "evidence": "trainer.py:565-568 filters target_user_ids to only those in user_to_idx (366,871 users). Remaining 46,537 val users (11.3%) get empty predictions []. In final eval (line 947), evaluate(predictions, ground_truth, config) includes all 413,408 gt users, so 46,537 cold-start users contribute AP=0. Popularity baseline (train.py:280, popularity.py:52-57) computes global top-12 once, then returns same list for ALL users => all 413,408 users get identical predictions.",
+          "category": "bug",
+          "severity": "high",
+          "fix": "Either: (1) Evaluate both models on IDENTICAL user sets: filter val_gt to only users in user_to_idx before calling evaluate(), or (2) Add fallback predictions for cold-start users (e.g., populate with popularity items), or (3) Evaluate stratified by user cohort (active vs cold-start) with transparent reporting. Code change: trainer.py:929-947 should filter ground_truth dict before line 947 call to evaluate()."
+        },
+        {
+          "issue": "Impact quantification: the reported 0.001773 DeepFM MAP@12 is 10.8% lower than fair comparison on identical users",
+          "evidence": "docs/tuning_history.md reports v1 DeepFM MAP@12=0.001773 on epoch 6. val_ground_truth.json has 413,408 users, feature store covers 1,298,206 users. id_maps.json user_to_idx has 1,298,206 entries. Test: {len(val_gt), len(user_to_idx), len([u for u in val_gt if u in user_to_idx])} = 413408, 1298206, 366871. Apples-to-apples: Popularity on all 413K gets 0.003783, but 46.5K cold-start users contribute AP=0 to DeepFM pooled metric.",
+          "category": "metric-framing",
+          "severity": "high",
+          "fix": "Report MAP@12 stratified by user cohort: 'MAP@12 (all users)=0.001773, MAP@12 (feature-available users only)=X'. Or rescale reported headline metric to fair comparison baseline. Current practice conflates two different scenarios: (a) single pooled MAP that penalizes sparse predictions, (b) conditional MAP on capable users only."
+        },
+        {
+          "issue": "Score tie-breaking in full-catalog scoring: metadata-only models produce tie-heavy scores; argsort vs lax.top_k differ subtly on tie resolution",
+          "evidence": "trainer.py:397 uses jnp.argsort(scores)[::-1][:k], line 487 uses jax.lax.top_k(scores_2d, k). Synthetic test: 30 items score 0.5, 30 score 0.35 => top-k from tie group picked deterministically (FIFO for argsort, stable for top_k but indices differ). H&M: 37,033 items, user metadata cardinality low (age_group x club_member_status x fashion_news_freq = 5x2x3=30 combinations); item metadata product_type x colour ~140 bins => many items per score value => ties ubiquitous.",
+          "category": "bug",
+          "severity": "medium",
+          "fix": "Use stable sort (np.argsort(..., kind='stable')) or explicitly break ties via (score, -item_id) tuples. Current behavior is deterministic within a run (no randomness), but selection among tied items is not semantically meaningful. For metadata-heavy models, tie-breaking can introduce spurious ranking differences. Recommendation: tie-break by item popularity or -item_id to ensure reproducibility and fairness."
+        },
+        {
+          "issue": "Metadata-only feature capacity: even correcting for evaluation bias, DeepFM loses to Popularity (structure is weak)",
+          "evidence": "trainer.py: DeepFMInput uses only {user_cat, user_num, item_cat, item_num}, no user_id or item_id embeddings. src/features/engineering.py builds user_cat=(age_group, club_member_status, fashion_news_frequency) + 8 user_num, item_cat=(product_type_name, colour_group_name, garment_group_name, section_name, index_name) + 2 item_num. Zero user purchase history, zero item-specific interaction signal. This is by design (Level-1 baseline), not a bug.",
+          "category": "design",
+          "severity": "medium",
+          "fix": "Not a fix — this is research design intent. Metadata-only baselines are expected to lose to Popularity on Gini-skewed data (Gini=0.7586, 20.7% items=80% txns). KAR Phase will add L1+L2+L3 LLM embeddings (h_fact, h_reason) to inject user-item interaction signal. For near-term improvement: include user_id/item_id embeddings, or use sequential models (DIN, SASRec) if order available."
+        },
+        {
+          "issue": "HR@12 and NDCG@12 not stratified by cold-start cohort; no transparency on performance gap",
+          "evidence": "trainer.py:636, 947 call evaluate() which returns single EvalResult with pooled MAP/HR/NDCG/MRR. metrics.py line 205 defines evaluate_by_cohort() but it is NOT called. Results: single scalar headline 'MAP@12=0.001773 HR@12=0.019' without cohort breakdown. Implication: unclear whether HR@12=0.019 is driven by feature-available users (likely higher) or dragged down by cold-start (AP=0).",
+          "category": "metric-framing",
+          "severity": "medium",
+          "fix": "Call evaluate_by_cohort(predictions, ground_truth, {'capable': set(users_with_features), 'cold-start': set(users_without_features)}, config) in trainer.py:945 to emit stratified metrics. Report pooled + cohort results. For comparison: baseline should clarify 'pooled (all users)' vs 'capable users only' in headline."
+        }
+      ],
+      "summary": "\n## Summary\n\nThe DeepFM metadata-only baseline (MAP@12=0.001773) loses to Popularity (0.003783) due to **evaluation fairness bugs + genuine feature weakness**:\n\n### Evaluation Fairness (High Severity)\n\n**1. Cold-start filtering creates apples-to-oranges comparison (HIGH):**\n   - DeepFM: generate_predictions() (trainer.py:565-568) filters target_user_ids to only 366,871 users in user_to_idx\n   - Remaining 46,537 val users (11.3% cold-start) get empty predictions []\n   - Final eval (line 947) includes all 413,408 users in ground_truth, so cold-start users contribute AP=0\n   - Impact: 10.8% MAP@12 penalty from cold-start alone\n   - Popularity baseline (train.py:280, popularity.py:52-57) assigns same items to ALL 413,408 users\n   - **Fix:** Evaluate both on identical user sets or report stratified results\n\n**2. Tie-breaking in argsort/top_k for metadata-only models (MEDIUM):**\n   - Metadata features create low-cardinality bins (~140 product_type×colour groups on 37K items)\n   - Many items tie with same score; argsort/top_k pick FIFO/implementation-defined order\n   - Deterministic within run but semantically meaningless\n   - **Fix:** Use stable sort or tie-break by item_id/popularity\n\n### Genuine Feature Weakness (Design, Not Bug)\n\n**3. Metadata-only features have zero user-item personalization:**\n   - User features: 3 categorical + 8 numerical (no item-specific history)\n   - Item features: 5 categorical + 2 numerical (no user-specific signal)\n   - No collaborative filtering (no user_id/item_id embeddings)\n   - Gini=0.7586 (popularity dominates)\n   - **Expected:** metadata-only < Popularity\n   - **By design:** KAR will add L1+L2+L3 LLM embeddings to inject interaction signal\n\n### Metric Framing (MEDIUM)\n\n**4. No cohort-stratified reporting:**\n   - Headline: \"MAP@12=0.001773\" (pooled, penalized by cold-start)\n   - Should separate: \"MAP@12 (all)=0.001773 | MAP@12 (feature-capable)=xxx\"\n   - evaluate_by_cohort() exists but never called\n   - **Fix:** Add stratified metrics in trainer.py final eval\n\n### Verdict\n\nThe 0.001773 is **NOT a code/modeling bug** but an **evaluation fairness issue + expected metadata-only weakness**. Model trains correctly. The real problem is the 11.3% cold-start penalty and lack of transparent cohort reporting. Fair comparison requires either: (1) identical user sets, (2) fallback predictions for cold-start, or (3) stratified results.\n"
+    }
+  ],
+  "synthesis": {
+    "ranked_root_causes": [
+      {
+        "cause": "FM second-order term has ~145x larger output scale than the DNN at initialization, so it dominates and saturates the logit. Empirically (4096-row batch, normalized numericals N(0,1)): fm_second std=24.7 (range [-132,+155]), first_order std=3.0, dnn_out std=0.17. FM accounts for 99.3% of total logit variance; sigmoid(logit) is already saturated at init (min=0.0000, max=1.0000, std=0.45). src/models/deepfm.py:137-140 computes 0.5*sum(sum_of_embeds^2 - squared_sum) over 18 fields x d_embed=16 with no 1/sqrt(d) scaling, LayerNorm, or embedding-norm control (nnx.Embed uses default lecun_normal, deepfm.py:60-71). The DNN path IS normalized (BatchNorm), so it sits at O(0.1) while raw FM sits at O(25).",
+        "category": "bug",
+        "severity": "high",
+        "why_explains_underperformance": "The only component that can learn item/user-specific structure (the DNN) contributes ~0.0001 of the logit variance, while the untrained-random FM interaction term swamps it by 145x and saturates the sigmoid. With saturated outputs, BCE gradients are near-zero for confidently-wrong examples and the genuine pos>neg learning signal is buried in random FM noise from epoch 0. The model effectively cannot move off its noisy init toward useful ranking, which is exactly the observed symptom: it converges below a trivial popularity list. This is the single largest explanatory factor and it is a code bug, not a capacity ceiling.",
+        "fix": "Scale the FM second-order output (e.g. fm_second / sqrt(n_fields*d_embed) ~ /sqrt(288), or LayerNorm after the FM aggregate). Also initialize embeddings small (nnx.Embed kernel_init=normal(stddev~0.01) or divide lookups by sqrt(d_embed)). Re-measure the per-component logit std at init; target all three terms at O(1) so the DNN and first-order can actually compete. Add a one-line train-time assertion/log of std(fm_second) vs std(dnn_out) to prevent regression."
+      },
+      {
+        "cause": "No article_id / user_id embedding: items are represented only by 5 coarse categorical fields + 2 numerics. 17,255 unique categorical combinations cover 105,542 items (16.3% unique); 93.5% of items fall in a collision group of size >=2 (max 549). Within a collision group the model can only separate items by 2 numerics (total_purchases, avg_price). src/models/deepfm.py / DeepFMInput; src/features/engineering.py:66-72.",
+        "category": "design",
+        "severity": "high",
+        "why_explains_underperformance": "Even with the FM scaling fixed, the architecture has almost no item-level capacity: 93.5% of items are metadata-indistinguishable, so the model cannot learn item-specific preference and the best it can do is reproduce a coarse popularity/category prior. On a Gini=0.7586, 87%-single-purchase catalog, a discrete popularity list is a strong target; a metadata-only model with collapsed item identity has a low MAP ceiling and is expected to sit near or below it. This is a mis-specified experiment for a 'beat-popularity' gate, not a bug.",
+        "fix": "Add an optional article_id embedding (105,542 x 16 ~ 1.7M params) and user_id embedding to DeepFM, gated by a config flag so the metadata-only ablation is still runnable. For the Level-1 baseline framing, keep metadata-only but explicitly label it as a controlled ablation, not the headline model. Confirm the id-embedding variant clears popularity before declaring the metadata pipeline working."
+      },
+      {
+        "cause": "Cold-start eval is apples-to-oranges. Both models call evaluate() over the SAME 413,408 ground-truth users, but generate_predictions (trainer.py:565-568) assigns [] to the 46,537 users (11.26%) absent from user_to_idx, while predict_popularity (popularity.py:52-57) assigns the global top-12 to ALL users. So DeepFM's MAP denominator includes 46,537 forced-zero users that Popularity actually scores on. Verified: 413,408 gt users, 366,871 with features, 46,537 without.",
+        "category": "metric-framing",
+        "severity": "high",
+        "why_explains_underperformance": "It makes the reported gap look worse than the true model gap: DeepFM's 0.001773 is sum_AP(feature_users)/413,408; the fair number is sum_AP(feature_users)/366,871 = 0.001998 (x1.127). On the identical feature-available user set, Popularity scores 0.003802. So the comparison is genuinely unfair AND mis-reported — but it is NOT the dominant cause: after correcting the denominator, DeepFM (0.001998) still loses to Popularity (0.003802) by ~1.9x. Fixing eval is necessary for an honest gate but will not by itself flip the result.",
+        "fix": "Before any gate: (1) evaluate both models on the identical user set (filter ground_truth to users in user_to_idx, or give DeepFM a popularity fallback for cold users), and (2) report MAP@12 stratified by cohort (feature-capable vs cold-start) using the existing-but-uncalled evaluate_by_cohort() (metrics.py:205). Make the popularity baseline use the exact same fallback policy so parity is structural."
+      },
+      {
+        "cause": "Uniform-random negative sampling over the full catalog. src/features/engineering.py:376-385 draws negatives via rng.integers(0, n_items), so every item appears ~equally as a negative regardless of popularity (verified 1:4 ratio, 24.4M pos / 97.5M neg).",
+        "category": "design",
+        "severity": "medium",
+        "why_explains_underperformance": "The eval task is dominated by popular items (top 20.7% = 80% of transactions), but uniform negatives almost never pit a popular item against a positive, so the model is never trained to rank popular items correctly under the distribution it is scored on. This train/eval distribution mismatch caps achievable ranking quality and compounds the collapse from missing item identity. It is a design choice that mis-aligns the training objective with the metric.",
+        "fix": "Use popularity-proportional (or in-batch / mixed) negative sampling so harder, popular negatives appear, aligning the train distribution with the popularity-skewed eval. Cheapest version: sample a fraction of negatives proportional to item frequency."
+      },
+      {
+        "cause": "BCE with no positive weighting on 1:4 imbalance and a train/eval objective mismatch. src/losses.py:13-27 and trainer.py:184-193 use plain mean BCE; there is no pos_weight and no ranking loss, while evaluation is full-catalog MAP@12.",
+        "category": "design",
+        "severity": "medium",
+        "why_explains_underperformance": "Plain BCE on 80% negatives lets the model minimize loss by matching base rate rather than sharpening pos>neg ranking; combined with the saturated FM logits, early gradients carry little ranking signal. This contributes to convergence toward a base-rate/popularity-like solution but is secondary to the FM-scale bug. Note: BPR loss already exists in the codebase (losses.py:30) but is not used for DeepFM.",
+        "fix": "Add a pos_weight (~4) to BCE, or switch the feature-model train step to the existing BPR/pairwise loss so the objective matches the ranking metric. Track a ranking metric (NDCG@12) on a validation sample during training, not just BCE loss, to catch base-rate collapse."
+      },
+      {
+        "cause": "Tie-heavy scores under metadata-only model + lax.top_k tie-breaking. Saturated/identical scores for collided items (empirically sigmoid saturates at init) mean top_k selection among ties is implementation-defined (trainer.py:482-488), not semantically meaningful.",
+        "category": "design",
+        "severity": "low",
+        "why_explains_underperformance": "Minor: it introduces arbitrary (but deterministic) ordering among indistinguishable items, slightly perturbing which of many tied items land in top-12. It does not explain the 2x gap but adds noise to the comparison and reduces reproducibility/interpretability.",
+        "fix": "Tie-break deterministically and meaningfully (e.g., by item popularity then -item_id) so tied items resolve toward the prior the metric rewards, and results are stable across runs/backends."
+      }
+    ],
+    "is_fair_comparison": "No — the comparison as run is NOT fair, but unfairness is a secondary contributor, not the main cause. Two distinct fairness problems exist: (1) Eval mechanics: both models are scored over the identical 413,408-user ground truth, yet DeepFM returns [] for the 46,537 users (11.26%) lacking features while Popularity returns the top-12 to everyone. This inflates DeepFM's MAP denominator by 1.127x. (2) Reporting: a single pooled MAP hides the cold-start vs feature-capable split (evaluate_by_cohort exists but is never called). I corrected this empirically: DeepFM fair = 0.001773 x 413408/366871 = 0.001998; Popularity on the SAME feature-available users = 0.003802. So even after making the comparison apples-to-apples, DeepFM still loses by ~1.9x. Conclusion: the headline gap is partly an unfair/ill-posed comparison, but the substantive loss is real and is driven by the FM initialization-scaling bug plus a mis-specified metadata-only/no-id, uniform-negative experiment. The user's instinct ('there's a bug, not just a weak baseline') is correct — the FM-scale issue is a genuine code bug.",
+    "recommended_actions_before_gate1": [
+      "FIX THE FM-SCALE BUG FIRST (highest ROI, it is a code bug). Scale fm_second by ~1/sqrt(n_fields*d_embed) (or LayerNorm the FM aggregate) and initialize embeddings small (stddev~0.01 or divide by sqrt(d_embed)). Verify by logging per-component logit std at init: target first_order/fm_second/dnn_out all at O(1) and sigmoid std < ~0.3 (not saturated). This is the change most likely to flip the result.",
+      "MAKE EVAL PARITY STRUCTURAL. Score both DeepFM and Popularity on the identical user set: either filter ground_truth to users in user_to_idx before evaluate(), or give DeepFM a popularity fallback for cold users AND use the same fallback in the baseline. Re-run the comparison so 'DeepFM vs Popularity' uses one denominator.",
+      "REPORT COHORT-STRATIFIED MAP. Call the existing evaluate_by_cohort() (metrics.py:205) with {feature_capable, cold_start} cohorts and report pooled + per-cohort MAP/HR/NDCG. Headline must read 'MAP@12 (feature-capable users)=X vs Popularity (same users)=Y', not the pooled number.",
+      "NORMALIZE / TRANSFORM NUMERICALS ROBUSTLY AND PERSIST STATS. total_purchases raw range [0,44761], mean 269, std 724 — z-score leaves a 61-sigma tail. Use log1p (or quantile) before z-score, and persist mean/std (or the transform) to feature_meta.json so train/val/test/inference apply identical scaling. Currently normalization is recomputed in-memory at train time only (trainer.py:714-721).",
+      "ADD AN article_id / user_id EMBEDDING VARIANT (config-gated). Keep metadata-only as a labelled ablation, but the model entering Gate-1 as 'the recommender' should have item identity, since 93.5% of items are metadata-indistinguishable. Confirm the id-embedding variant clears the popularity baseline on the fair user set.",
+      "ALIGN NEGATIVE SAMPLING WITH THE EVAL DISTRIBUTION. Switch from uniform to popularity-proportional (or in-batch/mixed) negatives so the model is trained to rank popular items, matching the Gini=0.7586 eval.",
+      "ALIGN THE TRAINING OBJECTIVE WITH THE METRIC. Add pos_weight~4 to BCE or use the already-implemented BPR/pairwise loss for the feature model, and monitor a sampled NDCG@12 during training (not just BCE) to detect base-rate collapse early.",
+      "ADD A SANITY GUARDRAIL. After the fixes, assert the trained DeepFM beats Popularity on the SAME user set before promoting it; tie-break top_k deterministically by (score, popularity, -item_id) for reproducibility. Only then run Gate-1 (KAR vs baseline), so KAR is not being asked to rescue a broken/over-saturated backbone."
+    ],
+    "verdict": "The user is right: this is a bug, not merely 'Level-1 baseline is weak'. Ranked by severity x explanatory power: (1) HIGH/BUG — FM second-order initialization scaling. Empirically the FM term carries 99.3% of logit variance at init (std 24.7 vs DNN 0.17) and saturates the sigmoid, burying the only item-aware component (DNN) by ~145x; this alone can keep the model stuck below a trivial popularity list and is a fixable code bug. (2) HIGH/DESIGN — no article_id/user_id embedding: 93.5% of items are metadata-indistinguishable (17,255 combos for 105,542 items), so item-level capacity is near zero; metadata-only cannot personalize at this catalog scale. (3) HIGH/METRIC-FRAMING — cold-start eval is unfair: DeepFM gets [] for 11.26% of scored users while Popularity gets top-12 for all, inflating DeepFM's denominator by 1.127x and hidden by pooled (non-stratified) reporting. (4) MEDIUM/DESIGN — uniform negatives mismatched to the popularity-skewed eval. (5) MEDIUM/DESIGN — plain BCE (no pos_weight) on 1:4 imbalance + BCE-vs-MAP objective mismatch (BPR exists but unused). (6) LOW/DESIGN — tie-breaking on saturated/identical scores. IS THE COMPARISON FAIR? No, but unfairness is secondary: correcting the denominator gives DeepFM 0.001998 vs Popularity 0.003802 on the identical user set — still a ~1.9x loss. So fix the FM-scale bug and eval parity FIRST, add an id-embedding variant and popularity-aware negatives, normalize/persist numericals, and report cohort-stratified MAP — only then is it meaningful to run Gate-1. Most relevant files: /home/mail-agent/project/llm-factor-recsys-hnm/src/models/deepfm.py (FM scaling + init, lines 60-71, 137-140), /home/mail-agent/project/llm-factor-recsys-hnm/src/training/trainer.py (eval parity 565-568, 929-947; in-memory normalization 714-721), /home/mail-agent/project/llm-factor-recsys-hnm/src/losses.py (BCE no pos_weight 13-27; unused BPR 30-42), /home/mail-agent/project/llm-factor-recsys-hnm/src/features/engineering.py (uniform negatives 376-385), /home/mail-agent/project/llm-factor-recsys-hnm/src/evaluation/metrics.py (uncalled evaluate_by_cohort 205), /home/mail-agent/project/llm-factor-recsys-hnm/scripts/train.py (baseline eval over all gt users 270-288), /home/mail-agent/project/llm-factor-recsys-hnm/src/baselines/popularity.py (predict_popularity assigns top-12 to all 52-57)."
+  }
+}

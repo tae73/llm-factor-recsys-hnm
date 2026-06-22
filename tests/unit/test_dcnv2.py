@@ -185,6 +185,52 @@ class TestDCNv2Model:
 
 
 # ---------------------------------------------------------------------------
+# ID Embedding Tests (use_id_embed)
+# ---------------------------------------------------------------------------
+
+
+class TestDCNv2IdEmbed:
+    def test_id_embed_disabled_by_default(self, field_dims, n_numerical):
+        config = DCNv2Config(
+            d_embed=4, n_cross_layers=2, n_experts=2, d_low_rank=8,
+            dnn_hidden_dims=(8,), dropout_rate=0.0, use_batch_norm=False,
+        )
+        m = DCNv2(field_dims, n_numerical, config, rngs=nnx.Rngs(params=42, dropout=43))
+        assert m._use_id_embed is False
+
+    def test_id_embed_requires_catalog_sizes(self, field_dims, n_numerical):
+        config = DCNv2Config(
+            d_embed=4, n_cross_layers=2, n_experts=2, d_low_rank=8,
+            dnn_hidden_dims=(8,), dropout_rate=0.0, use_batch_norm=False,
+            use_id_embed=True,  # n_users/n_items default 0 → disabled
+        )
+        m = DCNv2(field_dims, n_numerical, config, rngs=nnx.Rngs(params=42, dropout=43))
+        assert m._use_id_embed is False
+
+    def test_id_embed_distinguishes_identical_metadata(self, field_dims, n_numerical):
+        """Identical metadata, different item_idx → different logits."""
+        config = DCNv2Config(
+            d_embed=8, n_cross_layers=2, n_experts=2, d_low_rank=8,
+            dnn_hidden_dims=(16, 8), dropout_rate=0.0, use_batch_norm=False,
+            use_id_embed=True, n_users=100, n_items=200,
+        )
+        m = DCNv2(field_dims, n_numerical, config, rngs=nnx.Rngs(params=1, dropout=2))
+        m.eval()
+        inp = DeepFMInput(
+            user_cat=jnp.zeros((2, 3), dtype=jnp.int32),
+            user_num=jnp.zeros((2, 8), dtype=jnp.float32),
+            item_cat=jnp.zeros((2, 5), dtype=jnp.int32),
+            item_num=jnp.zeros((2, 2), dtype=jnp.float32),
+            user_idx=jnp.array([5, 5], dtype=jnp.int32),
+            item_idx=jnp.array([7, 42], dtype=jnp.int32),
+        )
+        logits = m(inp)
+        assert logits.shape == (2,)
+        assert jnp.all(jnp.isfinite(logits))
+        assert abs(float(logits[0]) - float(logits[1])) > 1e-6
+
+
+# ---------------------------------------------------------------------------
 # Training Step Tests
 # ---------------------------------------------------------------------------
 

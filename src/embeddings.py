@@ -155,9 +155,11 @@ def compute_user_embeddings(
     gc.collect()
     try:
         import torch
-        if hasattr(torch.mps, "empty_cache"):
+        if torch.backends.mps.is_available():
             torch.mps.empty_cache()
-    except (ImportError, AttributeError):
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
         pass
 
     # Merge all chunks -> final .npz
@@ -232,9 +234,11 @@ def _encode_and_save_chunk(
         gc.collect()
         try:
             import torch
-            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
-        except (ImportError, AttributeError):
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
             pass
     logger.info(
         "  Chunk %d/%d encoded %d sub-batches",
@@ -254,9 +258,11 @@ def _encode_and_save_chunk(
     gc.collect()
     try:
         import torch
-        if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+        if torch.backends.mps.is_available():
             torch.mps.empty_cache()
-    except (ImportError, AttributeError):
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
         pass
 
 

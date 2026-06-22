@@ -10,21 +10,33 @@ import jax
 import jax.numpy as jnp
 
 
-def binary_cross_entropy(logits: jax.Array, labels: jax.Array) -> jax.Array:
+def binary_cross_entropy(
+    logits: jax.Array, labels: jax.Array, pos_weight: float = 1.0
+) -> jax.Array:
     """Numerically stable binary cross-entropy from logits.
 
-    Formula: max(x, 0) - x*y + log(1 + exp(-|x|))
+    Formula (per element): max(x, 0) - x*y + log(1 + exp(-|x|))
+
+    When ``pos_weight != 1.0``, positive examples (label==1) are scaled by
+    ``pos_weight``, counteracting the heavy negative skew of negative sampling
+    (e.g. 4:1 neg:pos). ``pos_weight=1.0`` reproduces the unweighted mean.
 
     Args:
         logits: Raw model output (B,) — no sigmoid applied.
         labels: Binary labels (B,) — 0.0 or 1.0.
+        pos_weight: Multiplier applied to the positive-class loss terms.
 
     Returns:
         Scalar mean loss.
     """
-    return jnp.mean(
+    per_example = (
         jnp.maximum(logits, 0) - logits * labels + jnp.log1p(jnp.exp(-jnp.abs(logits)))
     )
+    if pos_weight == 1.0:
+        return jnp.mean(per_example)
+    # Up-weight positives; mean over batch (denominator stays B for a stable scale).
+    weights = jnp.where(labels > 0.5, pos_weight, 1.0)
+    return jnp.mean(weights * per_example)
 
 
 def bpr_loss(pos_scores: jax.Array, neg_scores: jax.Array) -> jax.Array:

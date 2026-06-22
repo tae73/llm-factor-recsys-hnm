@@ -3,7 +3,17 @@
 > 실제 배치 처리(속성 추출, 유저 프로파일링)와 모델 학습은 `scripts/` CLI 엔트리포인트로 실행한다.
 > DVC 파이프라인(`mlops/pipeline/dvc.yaml`)은 이 스크립트들을 래핑하여 재현성을 보장한다.
 
-## Project Status: Phase 1 완료 → Phase 2 진행 예정
+## Project Status: Phase 0–4 완료 → **2026-06 전면 재설계 진행 중** (→ `docs/research_design/redesign_2026-06.md`)
+
+> **2026-06-14 재설계 (Falsification-First):** "성능·자원 문제로 중단" 재진단 → 자원 부족 아님, **단일 검증 scoring 병목**이 원인.
+> - **Track B (병목 교정) 완료:** `validate_sample` per-user(batch_size=1) → caller-side 배치(`generate_predictions`/`generate_predictions_kar`, `jax.lax.top_k`). 신규 등가성 테스트 9건 포함 **686 unit pass, 회귀 0**.
+> - **Track A Gate-0 (make-or-break) 완료 — 재확인+robustness+적대검증 통과:** L2/L3 증분 가치 probe(confound 해소 `meta.npz`). **C1 +130.9%**(LLM텍스트 ≫ metadata, 5/5 skeptic holds — 단 ~+114%p는 **L1** 단계), **C2 +8.0%**(L2 = **weak·regime-의존**, k=12 cold-start 비유의), **C3 −13.5%·C4 −7.7%**(L3 = **frozen content-retrieval에서만 drop**, learnable gate가 최종 심판). → 3-Layer "다 도움" → **L1 강 / L2 약 / L3 in-model 미결**로 honest reshape.
+> - **데이터:** 세션 중 derived data 소실 → raw로 processed/features 재생성 + 사용자 factual knowledge 재업로드 + 본인 embeddings(cuda:1) 재생성 → Gate-0 동일 재현 ✅.
+> - **백본 진단·정비 완료(§7):** DeepFM<Popularity는 실재 **FM-scale 버그**(logit 분산 99.2% 점유·sigmoid 포화) + item-collapse + 불공정 eval. 수정 완료(686+20 tests). 단 id-embed는 극단 sparsity에서 **발산**(loss≈4800) → KAR의 사전학습 BGE가 item-identity 메커니즘.
+> - **★ pivotal 발견(§8):** Kaggle 대비 10배 낮은 건 데이터·metric 문제가 **아님**. 즉시-다음주 평가 시 **repurchase baseline=0.0243(Kaggle 수준)**. 원인: ① 프레이밍이 H&M 지배 신호 **repurchase+recency를 버림** ② **2개월 gap eval**. GT의 **95.9%가 새 아이템**(discovery). → **Hybrid 재설계 채택**.
+> - **Hybrid foundation 구축(720 tests):** immediate-next-period split + repurchase/recent-pop baseline(repurchase=0.0237 재현) + `discovery_map`(새-아이템 GT) metric. (`src/data/splitter.py`, `src/baselines/repurchase.py`, `src/evaluation/cohorts.py`)
+> - **★ LLM의 자리 확정(§9, probe_06→07):** content를 *standalone 검색기*로 쓰면 discovery에서 popularity에 짐(0.0013<0.0027). 그러나 **인기 후보 풀의 re-ranker로 쓰면 +93%(0.0038 vs 0.0020)** — content/LLM은 **candidate-gen + ranker 패턴의 ranker**가 제자리. KAR = 학습된 re-ranker. 상세: `redesign_2026-06.md` §7–9, `witnesses/probe_0{5,6,7}_result.json`, `deepfm_audit_result.json`.
+> - **모든 KAR 전제 준비 완료:** item/user BGE(user_bge 재생성, mps→cuda 이식성 버그 수정 포함) + ablation + features + immediate-split. **다음 = Gate-2'(trainable KAR as re-ranker, discovery/cold cohort).**
 
 ---
 
@@ -100,30 +110,16 @@
 - [x] DIN/SASRec 단위 테스트 — test_din.py (12), test_sasrec.py (16), test_sequences.py (6) — 100 total ALL PASS
 - [x] DeepFM 학습 실행 — 9 epochs (early stop), best epoch 6, MAP@12=0.001773, 7,953초 (A100 MIG 3g.40gb)
 - [x] PRNGKey save/load 버그 수정 (`_save_model_state`, `_load_model_state`)
-- [x] DeepFM 성능 튜닝 (v1-v13) — logit 폭발, mode collapse, BCE-ranking 불일치 진단. Feature quality 한계 확인
-- [x] DCNv2 안정화 — CrossLayerV2에 LayerNorm 추가 (MoE residual 폭발 해결)
-- [x] DCNv2 v16 학습 — **MAP@12=0.004515** (best epoch 8), Popularity(0.003783) 돌파 (119%)
-- [x] NumpyBatchIterator 교체 + chunked prediction scoring 구현
-- [x] DeepFM + LayerNorm 학습 — **MAP@12=0.004020** (best epoch 2), Popularity 돌파 (106%)
-- [x] LightGCN 시도 — OOM (1.4M node graph, 40GB MIG 초과)
-- [x] ReRank-Base (DeepFM→LightGBM) — MAP@12=0.000193 (Stage 1 recall 부족으로 저조)
-- [x] DeepFM+LayerNorm 전체 유저(413K) prediction — MAP@12=0.002941 (Popularity의 77.7%, ~2시간)
-- [x] DCNv2+LayerNorm 전체 유저(413K) prediction — MAP@12=0.003361 (Popularity의 88.9%, ~3시간)
-- [x] Level 1 baseline 결과 확정 — 두 모델 모두 전체 평가에서 Popularity(0.003783) 미달. 1000 sample validation은 25~27% 과대추정
+- [ ] Level 1 baseline 전체 평가 (scoring 배치화 필요 — per-user 413K에 ~3.5시간)
+- [ ] scoring 배치화 (`score_full_catalog` → batched vmap)
 
-### Phase 2.5b: GBDT Re-Ranker Baseline (2-stage)
-- [x] `src/config.py` — ReRankerConfig, ReRankerResult 추가
-- [x] `src/models/reranker.py` — LightGBM wrapper (train/predict/save/load/feature_importance)
-- [x] `src/features/reranker_features.py` — Attribute encoding + feature builder (Base 21D / Full ~127D)
-- [x] `src/training/trainer.py` — `extract_stage1_candidates()` 추가 (기존 함수 무수정)
-- [x] `scripts/train_reranker.py` — CLI (Typer, --mode base/full)
-- [x] `configs/model/reranker.yaml` — LightGBM 하이퍼파라미터
-- [x] `pyproject.toml` — lightgbm>=4.0.0 의존성 추가
-- [x] 단위 테스트 — test_reranker.py (~20 tests)
-- [x] ReRank-Base (DeepFM Stage1, 5K sample) — MAP@12=0.000193 (Stage 1 recall 부족)
-- [x] ReRank-Base (DCNv2 Stage1, 5K sample) — **MAP@12=0.004910** (Popularity 130%, DCNv2 단독 대비 +46%)
-- [x] ReRank-Base 전체 유저 평가 — **MAP@12=0.004055** (Popularity 107.2%, 전체 413K users, 3.2시간)
-- [ ] ReRank-Full (DCNv2 Stage1 + L1+L2+L3 속성) — KAR 실험 단계에서 진행
+### Backbone Overhaul (메타데이터 DeepFM < Popularity 교정 — 5-agent audit 후속)
+- [x] Tier1 FM-scale 버그 수정 (`deepfm.py`: `embed_init_std`+`fm_norm`+`_fm_scale`) + 검증 (Task #8, 선행 완료)
+- [x] **Tier1 eval 공정성 + cohort 리포팅** (Task #9) — `split_eval_cohorts()` 추가(`feature_capable`=user_to_idx 존재 / `cold_start`), headline=feature_capable, baseline(`scripts/train.py`)도 `--features-dir` 시 **동일 필터**로 cohort eval → apples-to-apples 비교. `evaluate_by_cohort` 연동, `{backbone}_metrics.json`에 headline/cohorts/cohort_sizes/all_users 저장. 단위 테스트 5건 추가
+- [x] **Tier2 numerical log-transform + stats 영속화** (Task #10) — z-score 전 heavy count 컬럼(user 3종 + item `total_purchases` max≈44761≈61σ)에 `np.log1p`, `feature_meta` 이름 매핑. per-column mean/std/log1p_cols → `data/features/feature_stats.json` 영속화(inference 재현). in-place 공유로 train/eval 일치. 단위 테스트 3건(log1p가 max|z| ~60σ→<10σ 완화)
+- [x] **Tier2 popularity-aware negative sampling + pos_weight** (Task #11) — `FeatureConfig.neg_strategy`(uniform|popularity|mixed) + `_build_item_popularity`/`_sample_negatives`, `scripts/build_features.py --neg-strategy/--neg-mixed-pop-frac`. `binary_cross_entropy(pos_weight=1.0)` + `TrainConfig.bce_pos_weight` + `scripts/train.py --bce-pos-weight`. 기본값으로 동작 불변. 단위 테스트 3건(pop이 인기 아이템 over-sample, 가중 BCE)
+- [x] **Tier2 config-gated article_id/user_id 임베딩** (Task #12) — `use_id_embed=True` 시 DeepFM/DCNv2가 per-user/per-item Embed 테이블 획득(메타데이터 동일 아이템 93.5%가 구별 가능). `DeepFMInput`에 optional `user_idx/item_idx`, FM 2nd-order +2 fields(`_fm_scale` 재계산), first-order id bias. `create_train_state`가 `n_users/n_items` 주입, data_loader가 항상 idx 추가, 배치/per-user/KAR scorer 모두 idx 전달, batch→jax dtype heuristic 수정(idx→int32). `--use-id-embed` CLI. 단위 테스트 9건(메타데이터 동일+다른 item_idx→다른 logit, batched==per-user)
+- [x] 검증: 타겟 트리플(test_deepfm/test_batched_scoring/test_dcnv2) 48 passed, 전체 unit 706 passed (기존 7 fail만 유지 — test_batch.py 6 + test_partial_coverage 1, 무관). `docs/scripts_tutorial.md` src↔scripts 동기화 완료
 
 ## Phase 3: 세그멘테이션 & 분석 (Week 8-10)
 
@@ -180,38 +176,7 @@
 - [x] KAR Config YAML — `configs/kar/default.yaml`
 - [x] 단위 테스트 72개 — `tests/unit/test_kar/` (expert 10, gating 17, fusion 15, hybrid 14, losses 8, prestore 4, backbone_embed 5) ALL PASS
 - [x] 기존 테스트 무파괴 확인 — 199 tests ALL PASS (72 new + 100 existing backbone + 21 features + 6 distributed)
-- [x] KAR v1 (DCNv2+KAR, Stage1=2ep 고정) — 1K sample MAP@12=0.004877, 전체 0.003273 (DCNv2 단독보다 낮음)
-- [x] Stage 1 early stopping 추가 — max 20ep + patience 3, best S1 model 로드
-- [x] Stage 2 early stopping 추가 — max 10ep + patience 3, best S2 model 로드 (코드 완료, 다음 실행부터 적용)
-- [x] KAR v2 학습 중 (Stage1 ES 적용) — S1 best MAP@12=0.005462 (ep2), S3 best MAP@12=0.005265 (ep5)
-- [x] KAR v2 전체 유저 prediction — MAP@12=0.003312 (87.6%), DCNv2 단독보다 낮음
-- [x] KAR v3 (S1+S2 ES, align 0.001, val 5K, patience 5) — 전체 MAP@12=0.003499 (92.5%), 첫 DCNv2 돌파 (+4.1%)
-- [ ] KAR v4 학습 중 (F3 Gated Fusion + Expert LayerNorm + Stage 2 BCE 포함)
-- [ ] KAR v4 전체 유저 prediction + MAP@12 확정
-
-### Phase 4b: 다중 후보 생성 + 상호작용 피처 강화 (Kaggle 상위 솔루션 참고)
-
-현재 bottleneck: 단일 모델(DCNv2)로 105K 전체 카탈로그 스코어링 → 후보 품질 낮음.
-Kaggle 1등(MAP@12~0.037)은 다중 소스 후보 + 풍부한 유저-아이템 피처로 ReRank.
-
-**후보 생성 다양화:**
-- [ ] 재구매 후보 생성 — 유저 과거 구매 아이템 + 같은 product_code SKU (DuckDB 쿼리)
-- [ ] 최근 인기 후보 — 7일/14일/30일 window별 인기 아이템 (시간 가중)
-- [ ] 연령대별 인기 후보 — age_group × product_type 교차 인기
-- [ ] 다중 소스 후보 합집합 → Top-100 후보 풀 구성
-
-**유저-아이템 상호작용 피처 (ReRanker용):**
-- [ ] `has_bought_category` — 유저가 이 카테고리를 산 적 있는지 (bool)
-- [ ] `category_purchase_count` — 이 카테고리 구매 횟수
-- [ ] `days_since_last_category` — 이 카테고리 마지막 구매 후 경과일
-- [ ] `price_ratio` — 유저 평균 가격 대비 아이템 가격 비율
-- [ ] `color_affinity` — 유저의 선호 색상과 아이템 색상 일치 여부
-- [ ] `repurchase_score` — 과거 동일 product_code 구매 여부
-
-**실험 프레임워크:**
-- [ ] ReRank-Base 강화 (다중 후보 + 상호작용 피처) → 강한 baseline 확보
-- [ ] ReRank-Full 강화 (강한 baseline + L1+L2+L3 속성) → KAR 증분 가치 측정
-- [ ] 강한 baseline 위에서 KAR 증분 가치가 유의미한지 검증
+- [ ] 첫 End-to-End 학습 실험 (DeepFM+KAR, L1+L2+L3) ← **서버에서 진행**
 
 ### 서버 실행 커맨드 (Phase 4 마무리)
 
@@ -344,6 +309,21 @@ done
 
 ## Key Findings
 
+### ★ 재설계 핵심 발견 (2026-06): L2/L3 "실패"의 진단 + 검증된 pivot
+
+| 단계 | 발견 | 수치 (canonical) |
+|------|------|------------------|
+| **현상** | L2/L3 정확도 증분 ≈ 0 (multi-task robust) | 13 probe + 적대검증: L1→L2 −0.8%(CI 0포함), complementarity L1+L3 −0.9%(CI 0포함) |
+| **원인** | L2/L3 = L1의 (준)함수 = product-internal 재서술 | probe_14: L1→L2/L3 kNN 예측 평균 lift **0.38** (style_mood 0.71/21cls, style_lineage 0.51/44cls) |
+| **수정 ①** | L2/L3 = controllable 추천 인터페이스 (L1 불가) | probe_15: steered 정밀도 **1.00 vs 0.14**(gain +0.86), 개인화 100% 유지, 8 제어축 |
+| **수정 ②** | LLM 외부 styling 지식 > product-similarity *(de-risk, pair-level)* | probe_16: HR@12 **0.2366 vs 0.2108 +12.2%**(CI [+0.0103,+0.0413]) → KAR open-world 비전 de-risk |
+| **⚠️ 정정 (R-9)** | full-scale에서 외부지식이 L1을 **못 넘음** = de-risk REVIVE 반증 | probe_21(100% coverage, $4.03 추출): KAR **0.00424 vs L1 0.00482 −12.0%(0/3)** NO-GO, 둘 다 pop +80~104%, cold-start L1 0.00719 > KAR 0.00568. probe_22: **population-selection bias**(de-risk-pop +14.1% GO vs full-pop −9.1% NO-GO) |
+
+**해석:** "L2/L3 실패"는 3-Layer taxonomy의 무효가 아니라 *LLM 사용 방향(제품 묘사 vs 외부지식)의 문제*. 가치 축이
+**정확도 → controllability + 외부지식 complementarity**로 재정의. 셀링포인트 = falsification rigor + diagnosis + validated pivot.
+**⚠️ 정직한 final(R-9):** full-scale 빌드(probe 21·22)에서 de-risk REVIVE(외부지식 +17%)는 **population-selection bias false positive**로 반증됨 — LLM 외부지식은 대표·cold-start 유저 discovery를 L1 대비 개선하지 못한다. **견고한 양성 = content L1이 popularity를 +80~104% 능가**. 무결성 가치는 de-risk→scale 반증의 추적 자체.
+> 상세: `docs/research_design/STORY.md`, `contribution_notes.md` R-7·**R-9**, `redesign_2026-06.md` §11·**§12 최종 정정**
+
 ### 연구 동기: Cold-Start 및 Triple-Sparsity
 
 | 차원 | 수치 | 의미 |
@@ -367,31 +347,6 @@ done
 | Popularity Recent (7d) | 0.001917 | 0.029886 | 0.004531 | 0.009449 |
 | UserKNN (ALS) | 0.003036 | 0.033901 | 0.006319 | 0.012228 |
 | BPR-MF | 0.001308 | 0.016069 | 0.002839 | 0.004924 |
-
-### Phase 2.5 Neural Baseline 성능 (Validation Set, k=12)
-
-**전체 유저 평가 (413K users):**
-
-| Model | MAP@12 | HR@12 | NDCG@12 | MRR | vs Popularity |
-|-------|--------|-------|---------|-----|--------------|
-| **Popularity Global** | **0.003783** | **0.044994** | **0.008122** | **0.015481** | **100%** |
-| DCNv2 + LayerNorm | 0.003361 | 0.039356 | 0.007190 | 0.014660 | 88.9% |
-| DeepFM + LayerNorm | 0.002941 | 0.041318 | 0.006864 | 0.012362 | 77.7% |
-
-**1000 user sample vs 전체 비교:**
-
-| Model | 1000 sample MAP@12 | 전체 413K MAP@12 | 과대추정 |
-|-------|-------------------|-----------------|---------|
-| DCNv2 + LayerNorm | 0.004515 | 0.003361 | +34.3% |
-| DeepFM + LayerNorm | 0.004020 | 0.002941 | +36.7% |
-
-**핵심 발견:**
-- **전체 평가에서 두 모델 모두 Popularity 미달** — 1000 sample validation이 25~37% 과대추정
-- **LayerNorm이 두 모델 모두에서 핵심** — DeepFM 2.27x, DCNv2 ∞ (발산→정상) 향상
-- DCNv2(88.9%) > DeepFM(77.7%) — Cross Network이 FM보다 14% 우수
-- **메타데이터 피처만으로는 Popularity 미달** → KAR (L1+L2+L3 LLM 속성)의 증분 가치가 연구 핵심
-- ReRank-Base 실패 — Stage 1(DeepFM) recall 부족으로 GBDT re-ranking 무효
-- LightGCN — 1.4M 노드 그래프가 40GB MIG 초과, 실행 불가
 
 ### Phase 0 EDA 주요 발견
 
@@ -583,4 +538,30 @@ done
 - ~~Prompt Output Evaluation Framework~~ ✓ 완료 — `src/eval_prompt/` (judge.py, structural.py, factual.py, reasoning.py, report.py), `scripts/eval_factual.py`, `scripts/eval_reasoning.py`, `docs/evaluation_methodology.md`, 57 tests PASS. 기존 01/01a/01b/02 노트북 삭제 → 01_factual_eval.ipynb + 02_reasoning_eval.ipynb 대체
 - ~~Phase 2: 배치 실패 2,845건 retry 실행~~ ✓ 완료 (`--retry-failed` → 3 retry 청크 Batch API 완료, 876,790건 전원 `llm`, fallback 0건, 최종 1,298,206 유저 parquet 조립, reasoning_coverage=1.0)
 - ~~Phase 2: 추론 지식 품질 분석 노트북~~ ✓ 완료 (`notebooks/02a_reasoning_quality_report.ipynb` — 46 cells, 13 figures, 6/6 GO)
+- [x] **Hybrid foundation 구현 (Gate-1')** — immediate-next-period eval split + repurchase/recent-pop baselines + discovery/cohort 평가. probe_05 로직을 production `src/`로 승격.
+  - `src/data/splitter.py`: `build_immediate_eval(processed_dir, output_dir, train_end, horizon_days=7)` → `(train_end, train_end+horizon]` 윈도우 GT (`immediate_ground_truth.json`, Kaggle-comparable). `SplitConfig.eval_horizon_days=7` 추가. `run_split(..., build_immediate=True)`, `scripts/preprocess.py --build-immediate/--no-build-immediate` (default on).
+  - `src/baselines/repurchase.py`: `recent_popularity`/`repurchase_predict`/`hybrid_predict` (probe_05 그대로, t_dat date/datetime 호환). `scripts/train.py`에 backbone `repurchase`/`recent_popularity` + `--eval-split immediate` 추가.
+  - `src/evaluation/cohorts.py`: `activity_cohorts`/`evaluate_cohorts`/`discovery_map`(핵심 신규)/`repurchase_vs_new_decomposition`. per-user AP@k는 `metrics.evaluate` 재사용.
+  - **검증 (immediate split, 전체 85,648 유저)**: repurchase MAP@12=**0.02374** (probe_05 0.0243 재현), recent_pop=0.00307, global_pop=0.00351. `discovery_map(repurchase)`=0.00042 (≈0, discovery gap 격리). decomposition new=95.9%/repurchase=4.1%. 신규 단위테스트 23개 PASS.
+- [x] **재설계 세션 (Falsification-First, 2026-06) — `docs/research_design/redesign_2026-06.md` §1–11**
+  - [x] Gate-0 falsification (probe 01·04): META→L1 +130.9%(강함), **L1→L2 +8% weak, L2→L3 −13.5% harm**. 적대검증(5-skeptic): 자기 이전 "L2 생존" 과대주장 교정. 검증 병목(3.5h/epoch) 배치화(회귀 0).
+  - [x] LLM 처분 (probe 06·07·08): content=standalone 검색기 ✗ / **re-ranker +93%** ✓, layer 분해 **L1→L2 −0.8%(CI 0포함)**, L2→L3 −4.6%. → L1=헤드라인.
+  - [x] 백본 전면 정비: **DeepFM FM-scale 버그** 수정(logit std 24→1.9), numerical log-transform train/eval 일치, popularity-aware negative sampling, id-embed config-gate(희소 발산 → 비활성 결론).
+  - [x] Hybrid 재포지셔닝(R-4): "10× 낮은 MAP" 원인=eval setup(2개월 gap)+repurchase 폐기. immediate-split repurchase MAP@12=**0.02374**(Kaggle-comparable), discovery_map(NEW-only) 신설, new=95.9%/repurchase=4.1%.
+  - [x] L2/L3 Fair-Chance (probe 09·10·11·12·13): 4개 설계-fix(encoding·gating·context·complementarity) 전부 NO-GO → **multi-task robust redundancy 확정** (L1_cos 0.226 ≥ L1+L3 0.224).
+  - [x] **근본원인 진단 (probe_14)**: L1→L2/L3 kNN 예측 평균 lift **0.38** → L2/L3=L1의 (준)함수(product-internal 재서술). redundancy는 추출 설계의 구조적 귀결.
+  - [x] **Reframe ① controllability (probe_15)**: steered 정밀도 **1.00 vs 무제어 0.14**(gain +0.86), 개인화 100% 유지, metadata엔 없는 8 제어축. GO.
+  - [x] **Reframe ② 외부지식 KAR (probe_16)**: external_knowledge HR@12=**0.2366 vs L1_cos 0.2108 +12.2%**(CI [+0.0103,+0.0413], 0배제) → KAR open-world-knowledge 비전 첫 실증 = 컨셉 rescue. GO.
+  - [x] 문서 종합: contribution_notes **R-7** + 누적 수치 요약 `R+` 행 + 포트폴리오 서사 **`docs/research_design/STORY.md`**(falsification→diagnosis→pivot).
+  - [x] **외부지식 일반화 saga (probe 17–20, R-8)**: pair GO(+12.2%) → **frozen NO-GO(−60%)** → **learned fusion REVIVE(+12.6%)** → **placebo control REAL(지식-고유 +0.00080, 5/5)** → format 통일 NEUTRAL(단독) / multi-view ADDS(+0.00045, 3/3). reviewer의 fusion·format 지적이 직접 견인.
+  - [x] **Fusion 역할 = 핵심 레버**를 원 설계 `hm_unified_project_design.md` **§7.4.4** 에 명시(학습 Expert projection이 외부지식 가용성 1차 결정, item-side augmentation 결정적, 외부지식 multi-view 권장) + §7.4.2·§8.2.4 교차참조. redesign **§12**.
+  - [x] **1b/1c full-scale 빌드 + Gate-2' (probe 21·22, R-9)** ⚠️ **de-risk REVIVE 반증**: 1b 외부지식 **full 추출(47,224 product_code → 105,542 article, 100% coverage, $4.03, gpt-4.1-nano)** → `src/knowledge/external/` + `scripts/extract_external_knowledge.py`. 1c **Two-Tower(DSSM)** 학습(DeepFM은 full-catalog discovery MAP@12=0.000202 ≪ pop 0.00351 실패). **Gate-2' NO-GO(probe_21)**: KAR 0.00424 vs L1 0.00482 **−12.0%(0/3)**, 둘 다 pop +80~104%, cold-start L1 0.00719 > KAR 0.00568. **population isolation(probe_22)**: de-risk-pop +14.1%(3/3) GO vs full-pop −9.1%(1/3) NO-GO → **POPULATION-SELECTION BIAS**(de-risk eligible=인기 3,426 heavy buyer). de-risk REVIVE는 population-편향 false positive. canonical: `witnesses/probe_2{1,2}_result.json`. → contribution_notes **R-9**, redesign **§12 최종 정정**, STORY **§4.3**, design **§7.4.4**.
+  - [x] **연구 pivot → Enrichment v2 (`docs/research_design/enrichment_v2_design.md`)**: 가치를 추천정확도(negative)→ **interpretable multi-purpose catalog enrichment**(metadata 없는 *결정 축*; 분석·마케팅·엔지니어링 다각도). de-risk: **D3**(제어=user-intent-driven facet, context +42~190%/off-target −88~99%), **D5**(가치=capability 11 의미축, 예측 아님), **DE1**(기존 20속성 중 salvageable 2개; L2/L3 12개 중 0개; color_harmony/tone_season=metadata 재코딩 lift 1.0). 새 6 gap-axes(trend-phase·price-tier·fine-occasion·outfit-pairing-role·body-fit·care) + 4-use value matrix + H&M/음악 교차. canonical: `witnesses/probe_D{3,5}_result.json`, `probe_DE1_result.json`. **다음:** 새 속성 스키마 설계 + pilot 추출 + DE1 re-screen.
+  - [x] **E2-1: 6축 스키마 + 멀티모달 pilot + DE1 re-screen = GO (2026-06-16)** — 새 모듈 `src/knowledge/enrichment_v2/`(schema·prompts(metadata-free 멀티모달, fabric-word strip)·validator·extractor·sampling) + `src/features/behavioral_axes.py`(price-tier·trend-phase·co-purchase outfit-role) + CLI `scripts/{extract_enrichment_v2,build_behavioral_axes}.py` + `witnesses/probe_DE1_v2_new_attributes.py`(DE1 엔진 재사용, two-population, power flag). 10 unit test·ruff/black clean. Kaggle 전체 이미지 105,100 → pilot **500 code·5,354 art·100% cov·$0.093**(gpt-4.1-nano). **DE1 re-screen GO**(5/12 strong-gate, 2 SALVAGEABLE, seed42 byte-identical): 행동파생 `trend_phase`(meta_p 0.10·behav 0.057)·`outfit_role`(meta_p 0.28·behav 0.155) **SALVAGEABLE**, `price_tier` WEAK(inert); **LLM 인식축 9/9 실패**(occasion l1_p 0.85 REDUNDANT·집중은 해결 top1 0.81→0.45; care_burden top1 0.77·trend_look 0.72 CONCENTRATED); gap축 `value_gap`/`trend_gap` 비중복 통과·행동 inert→WEAK. **핵심: metadata 숨기기는 metadata-재코딩·집중을 고쳤으나 LLM 인식축은 L1과 redundant(probe_14 생존); 비중복 결정-축 = 행동 grounding + 인식×행동 gap.** canonical: `witnesses/probe_DE1_v2_result.json`. → contribution_notes **E2-1**, design **§7**. **다음:** 4-use value matrix(통과축 trend_phase·outfit_role·gap) + gap축 행동-검증.
+  - [x] **E2-2: 4-use value matrix = E2 GO (2026-06-16)** — 신규 `src/features/{enrichment_matrix,lead_lag}.py` + CLI `scripts/build_enrichment_matrix.py` + `witnesses/probe_E2_value_matrix.py`(4 cell: ①D3-steer·②lead-lag·③η-excess+placebo·④segment-divergence; capability×lift 분리, D3/D5/DE1 엔진 재사용). 6 unit test·ruff/black clean·seed42 재현·**API $0**. **capability 14/16, strong lift PASS 2/16** — 사전예측된 2 cell에만: **trend_phase→②lead-time**(share→sales(t+**3mo**) r=0.472 vs null 0.062, Δ=0.41 **CI[0.19,0.64]**) + **outfit_role→③merch**(η 0.623 vs meta 0.564, excess +0.059 CI[0.046,0.069], placebo 0.003). ①faceted MARGINAL(oracle ctx-steer +97%/+24%, 제어비용 큼); ④audience MARGINAL(practical-margin 미달, D5 재확인); gap축 NO/N/A. **핵심: GO지만 lift는 2 cell 국한 = thesis(가치=예측 아닌 결정-축) 정량 확정**; 실전가치 = momentum 3mo early-warning + co-purchase merch velocity + steerable intent(oracle 상한). 자기참조 차단(④ repurchase·③ placebo). canonical: `witnesses/probe_E2_result.json` + `results/figures/E2_value_matrix.png`. → contribution_notes **E2-2**, design **§5**. **다음:** lead-time/merch 실서비스 시나리오 + gap축 decision-lift 검증 + 음악 교차도메인.
+  - [x] **E2-3: value matrix 강화 = lift 2→3 (+1 genuine, ①②④ 정직 반증) (2026-06-16)** — 컬럼당 contribution을 *정직하게*(임계값 불변, 더 나은 target/granularity/outcome) 높이려 재설계. 신규 `src/features/audience_signals.py`(buyer-population 3-way join) + `enrichment_matrix.compute_merch_signals`(markdown/first-week/online) + `lead_lag` weekly/continuous + `witnesses/probe_E2b_value_matrix.py`(컬럼당 PRIMARY 1개·secondary descriptive). 11 unit test·ruff/black·seed42 byte-identical·E2-2 canonical 불변. **lift PASS 2/16→3/16**: **③ `trend_phase`→merch NEW PASS**(tautological velocity NO→launch **first_week_sell_through** η excess **+0.45** CI[0.43,0.46]·placebo 0.008·product_group residualize → 두 행동축 모두 merch); **① 반증**(oracle +97% but deployable history-predictor gain **0.0** — past값 steer, discovery는 새 아이템); **② refinement 반증**(weekly+continuous noisier→monthly PASS 0.41 유지); **④ 반증**(buyer-age div 0.38/0.49 < metadata 1.16·online도 패배 → 축 category-직교라 audience 못 가름). **핵심: ③만 정당 강화, ①②④는 반증 — genuine lift는 축이 metadata 없는 sales/co-purchase 신호 담는 그 지점에만(merch/trend), 제어·audience엔 없음.** canonical: `witnesses/probe_E2b_result.json` + `results/figures/E2b_value_matrix.png`. → contribution **E2-3**, design **§5**. **다음:** 3 PASS cell 실서비스화 + ① trend-aware predictor 탐색 + 음악 교차.
+  - [x] **E2-4: KAR user-side leg = 2-source × 4-use 분해 (2026-06-16)** — KAR 비대칭(item→Factual, user→Reasoning)의 user/reasoning leg를 ①control·④audience(둘 다 USER 결정)에 붙임. 신규 `src/features/user_axes.py`(reasoning_bge PCA-50·reasoning_fields TF-IDF+L1agg·demographic 11-feat baseline·FUTURE outcome) + `witnesses/probe_E2c_user_value.py`(11 test, E2/E2b spine 재사용·canonical mtime 불변 assert). CPU·seed42·**API $0**·byte-identical. outcome=held-out **FUTURE**(val 2020-07~08, tautology 차단), baseline=11 demographic. **결과 = KAR-SYMMETRY CONFIRMED**(item→②③ / user→④①): **④ audience modest PASS**(둘 다, STRONG — 오직 `fut_top_group` `reasoning_bge` Δ**+0.0117**(p6e-05)·`reasoning_fields` Δ**+0.0145**(p2.4e-04), ~+1pp at the 1pp bar; `fut_price_tier`는 바 아래·습관축(online/repurchase) NULL→demo 승·④b div 혼재 fields 1.973 PASS·bge 0.353 FAIL); **① control NO**(둘 다, STRONG); **②③ N/A-SEMANTICS**. **★ control① 최종 = capability-PASS / lift-NO (사용자 결정 A)**: D3 precision 1.00 vs 0.14 = 배포 가능 faceted 제어 표면(capability), 자동제어 lift는 item(E2-3 deployable 0.0)·user(E2-4 NO) 양쪽 반증. canonical: `witnesses/probe_E2c_user_value.json` + `results/figures/E2c_user_value.png`. → contribution **E2-4**, design **§5·§7·§8**. **다음:** 3 PASS cell 실서비스화 + gap축 decision-lift + 음악 교차.
+  - [x] **C-1: 3 PASS cell → 머천다이징 의사결정-지원 엔진 (build, product-design) (2026-06-16)** — value matrix가 닫은 lift PASS 3 cell(모두 **행동-파생 축**)을 batch 머천다이징 brief로 제품화. 신규 `src/serving/merch_scenarios.py`(NamedTuple `ScenarioConfig`/`ConfidenceCard`/`ScenarioBrief` + `trend_leadtime_brief`/`launch_signal_brief`/`copurchase_velocity_brief` + `build_all_briefs`/`value_matrix_posture`; `lead_lag.py`·`enrichment_matrix.py` feature 함수 재사용) + CLI `scripts/serve_scenarios.py`(Typer, `--scenario all|trend-leadtime|launch-signal|copurchase-velocity`) + `notebooks/06_merch_scenario.ipynb`(builder `notebooks/builders/build_06_merch_scenario.py`, 4 figure) + `tests/unit/test_merch_scenarios.py`(8 test PASS). CPU/DuckDB·**API $0**·ruff/black clean. **정직성: confidence 수치(r·η·CI)는 canonical `probe_E2*.json`에서 로드(재계산 X) → value matrix=single source of truth; lead-lag lag-3 r=0.4723 deterministic 재현(테스트 가드); canonical(`probe_E2*.json`·`E2*.png`) mtime 불변.** 3 brief: **A** trend_phase→lead-time(hot-share z-score 카테고리 조기경보, r=**0.472** vs null 0.062, lag 3mo) · **B** trend_phase→merch(launch first_week_sell_through 스코어카드, η=**0.673** vs 0.223) · **C** outfit_role→merch(anchor 역할 velocity 랭킹+번들 라벨, η=**0.631** vs 0.534). **posture 전체 노출**(capability **14/16** vs lift **3/16**): ① automatic lift·④ audience·gap축(value_gap/trend_gap)·recsys-accuracy negative는 **제품화 X·맥락화 O**. 출력 `results/tables/merch_scenarios/{name}.parquet`+csv, figure `results/figures/06_*.png`. → contribution **C-1** + 누적표 C-1 행, `docs/scripts_tutorial.md`. **다음:** gap축 decision-lift 별도 probe(백로그 b) + 음악 교차도메인(백로그 c).
+  - [x] **E2-5: gap축 FUTURE decision-lift = CLEAN NEGATIVE (백로그 b 종결) (2026-06-17)** — gap축(`value_gap`/`trend_gap`)이 E2-1서 capability/비중복은 통과했으나 행동 inert였던 것을, **두 미검증 각도**로 falsify: (1) **FUTURE-held-out** outcome(val 2020-07~08, train-frozen) (2) **자기 구성축 one-hot 대비 incremental**(η-vs-metadata 아님 — gap=c1−c2 collinearity를 one-hot으로 우회해 directional mismatch를 testable interaction으로). 신규 `src/features/enrichment_matrix.build_article_future_outcomes`(per-article FUTURE outcome, `compute_sell_through`/`compute_merch_signals` 재사용, `PRAGMA threads=1` 결정성) + `witnesses/probe_E2d_gap_decision.py`(2 gap축 × 4 결정[markdown-risk·hidden-gem·overhype/sleeper·survival] × 2 readout[incremental paired-fold + decision-rule precision@flag], placebo 2종[within-group·**sign-randomization**], Ridge ΔR²·partial-corr robustness, E2/E2b mtime 불변 assert) + `tests/unit/test_e2d_gap_decision.py`(8 test). CPU·seed42·**API $0**·`--repro` byte-identical·ruff/black clean. **결과 = CLEAN NEGATIVE(5/5 cell 0.01 margin 미달, PRELIM 0, n_val≥5 ~2,017/1,999)**: value→markdown incrΔF1 **+0.0031**(rule lift **0.728<1**·Ridge ΔR² −0.0039)·hidden-gem **−0.0081**; trend→overhype **+0.0087**(p=0.019이나 sub-margin·**sign-rand +0.0067=mean-reversion**·≥20 robust −0.0022·**raw corr +0.107→partial −0.015**); survival 둘 다 deployable flag lift ≤1.03(trend **0.888**=극단 gap 덜 생존). **gap축 = 비중복 *해석* 좌표이나 *예측/결정* 축 아님 확정**(capability YES·forecasting lift NO). 적대 audit 2종(false-negative·suppressed-effect) 독립 통과. canonical: `witnesses/probe_E2d_gap_decision.json` + `results/figures/E2d_gap_decision.png`. → contribution **E2-5** + 누적표, design **§5·§7·§8**, `docs/scripts_tutorial.md`. **다음:** 음악 교차도메인(백로그 c, D4 feasibility 먼저).
+  - [x] **R-10: Serendipity/Novelty/Long-tail = enrichment의 마지막 열린 recsys 차원도 CLEAN NEGATIVE (2026-06-19)** — "enrichment가 *추천*으로서의 역할을 할 수 있나"에 답: 정확도(probe_21 −12%)·diversity/coverage(probe_02 −7.7%/−2.3%)는 이미 닫힌 negative라, `redesign §65/§96`이 미측정으로 남긴 **serendipity/novelty/long-tail-hit**("L3의 마지막 rescue 경로")만 열려 있었음 → full-catalog(105,494)·**25,000 user**·discovery-native GT(immediate)로 STRONG falsify. 신규 `witnesses/_probe_common.py`(`item_novelty`·`longtail_exposure`·`tail_hit_count`·`serendipitous_hit_count`) + `witnesses/probe_23_serendipity.py`(7 variant × 6 metric + placebo + 결정-축 특성화) + `tests/unit/test_serendipity_metrics.py`(7 test). seed42·`--repro` byte-identical·**API $0**·prior 29 probe JSON mtime 불변·ruff/black clean. **결과 = CLEAN NEGATIVE(tie at best, never a win, all-NO)**: novelty는 trivially 부풀므로(headline 금지) relevance-grounded **S1·S2·S2b**만 verdict; **적대 audit이 frozen-τ "−60%"가 ~94% labeling 산물임을 발견 → fair S2b(labeling-symmetric) 추가**. matched-HR(−1%) `L1+L2+L3`가 fair **S2b 동률**(rel −0.02, CI[−0.0010,+0.0010] 0포함); L2/L3/EXT는 S2b −0.44~−0.74 LOSE. **placebo random-12가 novelty 19.31·tail-exp 0.81 최고지만 serendipitous hit ≈0**(novelty 함정 실증). cold-start rescue 없음. 적대 audit(trustworthy·not flippable·~10 정의서 unflippable) 통과. canonical: `witnesses/probe_23_result.json` + `results/figures/probe_23_serendipity.png`. → contribution **R-10** + 누적표, redesign **§65·§96** 종결, STORY, `docs/scripts_tutorial.md`. **결론: enrichment 추천 가치지도 전 축 negative — 소비자-추천 역할 종결, 가치는 merchant(C-1)·해석(E2)·제어(probe_15).**
 - Level 1 baseline 구현 (DeepFM + 기존 메타데이터 피처) — Content-Enhanced CF 기준선 확보

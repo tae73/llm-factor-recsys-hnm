@@ -39,7 +39,7 @@ from src.config import (
     TrainConfig,
     TrainResult,
 )
-from src.evaluation.metrics import evaluate
+from src.evaluation.metrics import evaluate, evaluate_by_cohort
 from src.features.store import (
     load_feature_meta,
     load_id_maps,
@@ -146,6 +146,13 @@ def create_train_state(
         field_dims += [item_cat_vocab_sizes[name] for name in feature_meta["item_cat_names"]]
         n_numerical = feature_meta["n_user_numerical"] + feature_meta["n_item_numerical"]
 
+        # When id embeddings are enabled, inject catalog sizes before construction.
+        if getattr(model_config, "use_id_embed", False):
+            model_config = model_config._replace(
+                n_users=feature_meta["n_users"],
+                n_items=feature_meta["n_items"],
+            )
+
         model = spec.model_cls(
             field_dims=field_dims,
             n_numerical=n_numerical,
@@ -153,7 +160,17 @@ def create_train_state(
             rngs=rngs,
         )
 
-    optimizer = nnx.Optimizer(model, optax.adam(learning_rate=train_config.learning_rate), wrt=nnx.Param)
+    optimizer = nnx.Optimizer(
+        model,
+        optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adamw(
+                learning_rate=train_config.learning_rate,
+                weight_decay=1e-5,
+            ),
+        ),
+        wrt=nnx.Param,
+    )
     return model, optimizer
 
 
@@ -162,8 +179,13 @@ def create_train_state(
 # ---------------------------------------------------------------------------
 
 
-def make_feature_train_step() -> Any:
-    """Return JIT-compiled train step for feature-based models (DeepFM, DCNv2)."""
+def make_feature_train_step(bce_pos_weight: float = 1.0) -> Any:
+    """Return JIT-compiled train step for feature-based models (DeepFM, DCNv2).
+
+    Args:
+        bce_pos_weight: Weight applied to positive examples in BCE (1.0 = no
+            reweighting). >1.0 up-weights the rarer positive class.
+    """
 
     @nnx.jit
     def train_step(
@@ -178,9 +200,11 @@ def make_feature_train_step() -> Any:
                     user_num=batch["user_num"],
                     item_cat=batch["item_cat"],
                     item_num=batch["item_num"],
+                    user_idx=batch.get("user_idx"),
+                    item_idx=batch.get("item_idx"),
                 )
             )
-            return binary_cross_entropy(logits, batch["labels"])
+            return binary_cross_entropy(logits, batch["labels"], pos_weight=bce_pos_weight)
 
         loss, grads = nnx.value_and_grad(loss_fn)(model)
         optimizer.update(model, grads)
@@ -274,12 +298,15 @@ def make_sasrec_train_step() -> Any:
     return train_step
 
 
-def make_train_step(backbone_name: str, model_config: Any) -> Any:
+def make_train_step(
+    backbone_name: str, model_config: Any, bce_pos_weight: float = 1.0
+) -> Any:
     """Factory: return the right JIT-compiled train step for a backbone.
 
     Args:
         backbone_name: One of "deepfm", "dcnv2", "lightgcn", "din", "sasrec".
         model_config: Backbone config (needed for LightGCN l2_reg).
+        bce_pos_weight: Positive-class weight for feature-based BCE.
 
     Returns:
         A callable train_step(model, optimizer, batch) → loss.
@@ -291,7 +318,7 @@ def make_train_step(backbone_name: str, model_config: Any) -> Any:
         return make_din_train_step()
     if backbone_name == "sasrec":
         return make_sasrec_train_step()
-    return make_feature_train_step()
+    return make_feature_train_step(bce_pos_weight)
 
 
 # Backward-compatible alias: feature-based train_step used by existing tests
@@ -373,11 +400,14 @@ def _score_full_catalog_features(
     i_cat = item_features["categorical"]
     i_num = item_features["numerical"]
 
+    use_id_embed = getattr(model, "_use_id_embed", False)
     inp = DeepFMInput(
         user_cat=jnp.array(u_cat, dtype=jnp.int32),
         user_num=jnp.array(u_num, dtype=jnp.float32),
         item_cat=jnp.array(i_cat, dtype=jnp.int32),
         item_num=jnp.array(i_num, dtype=jnp.float32),
+        user_idx=(jnp.full((n_items,), user_idx, dtype=jnp.int32) if use_id_embed else None),
+        item_idx=(jnp.arange(n_items, dtype=jnp.int32) if use_id_embed else None),
     )
 
     model.eval()
@@ -469,6 +499,76 @@ def _score_full_catalog_sasrec(
     return top_k_indices.tolist()
 
 
+def _topk_indices(scores_2d: jax.Array, k: int) -> np.ndarray:
+    """(B, n_items) scores → (B, k) descending item indices via ``lax.top_k``.
+
+    O(n·k) and avoids the reverse-slice of ``argsort(...)[::-1]``.
+    """
+    _, idx = jax.lax.top_k(scores_2d, k)
+    return np.asarray(idx)
+
+
+def _score_users_chunk(
+    model: nnx.Module,
+    backbone_name: str,
+    batch_idxs: np.ndarray,
+    user_features: dict[str, np.ndarray],
+    item_features_jax: tuple[jax.Array, jax.Array],
+    n_items: int,
+    k: int,
+    sequences: np.ndarray | None,
+    seq_lengths: np.ndarray | None,
+    graph_embeds: tuple[jax.Array, jax.Array] | None,
+) -> np.ndarray:
+    """Score a CHUNK of users against the full catalog → (n_batch, k) indices.
+
+    Vectorized over users (no Python per-user loop). Cheap backbones (graph,
+    sequential) collapse to a single matmul; feature-based / DIN broadcast
+    ``(n_batch * n_items)`` rows in one forward pass. Caller owns chunk sizing.
+    """
+    spec = get_backbone(backbone_name)
+    n_batch = len(batch_idxs)
+
+    if spec.needs_graph:
+        assert graph_embeds is not None
+        user_embeds, item_embeds = graph_embeds
+        scores = user_embeds[jnp.asarray(batch_idxs)] @ item_embeds.T  # (B, n_items)
+        return _topk_indices(scores, k)
+
+    if backbone_name == "sasrec":
+        assert sequences is not None and seq_lengths is not None
+        hist = jnp.array(sequences[batch_idxs], dtype=jnp.int32)     # (B, T)
+        h_len = jnp.array(seq_lengths[batch_idxs], dtype=jnp.int32)  # (B,)
+        scores = model.score_all_items(SASRecInput(history=hist, hist_len=h_len))  # (B, n_items+1)
+        return _topk_indices(scores[:, 1:], k)  # drop PAD col 0 → catalog index j
+
+    item_cat_jax, item_num_jax = item_features_jax
+    u_cat = jnp.repeat(jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32), n_items, axis=0)
+    u_num = jnp.repeat(jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32), n_items, axis=0)
+    i_cat = jnp.tile(item_cat_jax, (n_batch, 1))
+    i_num = jnp.tile(item_num_jax, (n_batch, 1))
+
+    if backbone_name == "din":
+        assert sequences is not None and seq_lengths is not None
+        hist = jnp.repeat(jnp.array(sequences[batch_idxs], dtype=jnp.int32), n_items, axis=0)
+        h_len = jnp.repeat(jnp.array(seq_lengths[batch_idxs], dtype=jnp.int32), n_items, axis=0)
+        inp = DINInput(user_cat=u_cat, user_num=u_num, item_cat=i_cat, item_num=i_num,
+                       history=hist, hist_len=h_len)
+    else:  # deepfm, dcnv2
+        if getattr(model, "_use_id_embed", False):
+            # user_idx broadcast per item; item_idx = arange tiled per user (matches
+            # the u_cat=repeat / i_cat=tile row layout of (n_batch * n_items)).
+            u_idx = jnp.repeat(jnp.asarray(batch_idxs, dtype=jnp.int32), n_items)
+            i_idx = jnp.tile(jnp.arange(n_items, dtype=jnp.int32), n_batch)
+            inp = DeepFMInput(user_cat=u_cat, user_num=u_num, item_cat=i_cat, item_num=i_num,
+                              user_idx=u_idx, item_idx=i_idx)
+        else:
+            inp = DeepFMInput(user_cat=u_cat, user_num=u_num, item_cat=i_cat, item_num=i_num)
+
+    scores = model.predict_proba(inp).reshape(n_batch, n_items)
+    return _topk_indices(scores, k)
+
+
 def generate_predictions(
     model: nnx.Module,
     target_user_ids: list[str],
@@ -480,573 +580,45 @@ def generate_predictions(
     backbone_name: str = "deepfm",
     sequences: np.ndarray | None = None,
     seq_lengths: np.ndarray | None = None,
-    batch_size: int = 256,
-    item_embeddings: np.ndarray | None = None,
-    user_embeddings: np.ndarray | None = None,
+    batch_size: int = 32,
 ) -> dict[str, list[str]]:
-    """Generate top-K predictions for target users (batched for speed)."""
-    spec = get_backbone(backbone_name)
+    """Generate top-K predictions for all target users (batched, every backbone).
 
-    # Use chunked scoring for feature-based models (memory-efficient)
-    if not spec.needs_graph and not spec.needs_sequence and batch_size > 1:
-        return _generate_predictions_chunked(
-            model, target_user_ids, user_features, item_features,
-            user_to_idx, idx_to_item, k,
-            user_batch_size=batch_size, item_chunk_size=2048,
-            item_embeddings=item_embeddings, user_embeddings=user_embeddings,
-        )
-
-    # Per-user scoring (mid-epoch validation, graph/sequential models)
-    predictions: dict[str, list[str]] = {}
-    for uid in target_user_ids:
-        u_idx = user_to_idx.get(uid)
-        if u_idx is None:
-            predictions[uid] = []
-            continue
-        top_item_indices = score_full_catalog(
-            model, u_idx, user_features, item_features, k=k, backbone_name=backbone_name,
-            sequences=sequences, seq_lengths=seq_lengths,
-        )
-        predictions[uid] = [idx_to_item[idx] for idx in top_item_indices]
-    return predictions
-
-
-def _generate_predictions_batched(
-    model: nnx.Module,
-    target_user_ids: list[str],
-    user_features: dict[str, np.ndarray],
-    item_features: dict[str, np.ndarray],
-    user_to_idx: dict[str, int],
-    idx_to_item: dict[int, str],
-    k: int = 12,
-    batch_size: int = 256,
-) -> dict[str, list[str]]:
-    """Batched full-catalog scoring for feature-based models (DeepFM, DCNv2).
-
-    For each batch of users, broadcasts user features against ALL items
-    and scores in a single forward pass: (batch_users * n_items, ...).
+    ``batch_size`` = users-per-chunk for feature-based / DIN backbones; cheap
+    graph / sequential backbones use a larger internal chunk. Replaces the old
+    per-user (``batch_size=1``) validation path that made validation ~5x slower
+    than training (PLAN.md Track B bottleneck).
     """
-    n_items = item_features["categorical"].shape[0]
-    item_cat = item_features["categorical"]  # (n_items, 5)
-    item_num = item_features["numerical"]    # (n_items, 2)
-
-    # Pre-convert item features to JAX (reused across all user batches)
-    item_cat_jax = jnp.array(item_cat, dtype=jnp.int32)
-    item_num_jax = jnp.array(item_num, dtype=jnp.float32)
-
-    # Filter valid users
+    spec = get_backbone(backbone_name)
     valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
-    invalid_users = {uid for uid in target_user_ids if uid not in user_to_idx}
+    predictions: dict[str, list[str]] = {
+        uid: [] for uid in target_user_ids if uid not in user_to_idx
+    }
+
+    n_items = item_features["categorical"].shape[0]
+    item_features_jax = (
+        jnp.array(item_features["categorical"], dtype=jnp.int32),
+        jnp.array(item_features["numerical"], dtype=jnp.float32),
+    )
 
     model.eval()
-    predictions: dict[str, list[str]] = {uid: [] for uid in invalid_users}
+    graph_embeds = model.get_all_embeddings() if spec.needs_graph else None
 
-    for batch_start in range(0, len(valid_pairs), batch_size):
-        batch_pairs = valid_pairs[batch_start:batch_start + batch_size]
-        batch_uids = [p[0] for p in batch_pairs]
-        batch_idxs = np.array([p[1] for p in batch_pairs])
-        n_batch = len(batch_idxs)
+    # Cheap backbones (single matmul) use a larger chunk; heavy broadcast stays small.
+    chunk = batch_size if not (spec.needs_graph or spec.needs_sequence) else max(batch_size, 1024)
 
-        # User features for this batch: (n_batch, d) → repeat for each item
-        u_cat = user_features["categorical"][batch_idxs]  # (n_batch, 3)
-        u_num = user_features["numerical"][batch_idxs]    # (n_batch, 8)
-
-        # Tile: each user paired with all items → (n_batch * n_items, ...)
-        u_cat_tiled = jnp.repeat(jnp.array(u_cat, dtype=jnp.int32), n_items, axis=0)
-        u_num_tiled = jnp.repeat(jnp.array(u_num, dtype=jnp.float32), n_items, axis=0)
-        i_cat_tiled = jnp.tile(item_cat_jax, (n_batch, 1))
-        i_num_tiled = jnp.tile(item_num_jax, (n_batch, 1))
-
-        inp = DeepFMInput(
-            user_cat=u_cat_tiled,
-            user_num=u_num_tiled,
-            item_cat=i_cat_tiled,
-            item_num=i_num_tiled,
+    for s in range(0, len(valid_pairs), chunk):
+        chunk_pairs = valid_pairs[s:s + chunk]
+        batch_idxs = np.array([p[1] for p in chunk_pairs])
+        topk = _score_users_chunk(
+            model, backbone_name, batch_idxs, user_features, item_features_jax,
+            n_items, k, sequences, seq_lengths, graph_embeds,
         )
-        scores = model.predict_proba(inp)  # (n_batch * n_items,)
-        scores = scores.reshape(n_batch, n_items)  # (n_batch, n_items)
-
-        top_k = jnp.argsort(scores, axis=-1)[:, ::-1][:, :k]  # (n_batch, k)
-        top_k_np = np.array(top_k)
-
-        for i, uid in enumerate(batch_uids):
-            predictions[uid] = [idx_to_item[int(idx)] for idx in top_k_np[i]]
-
-        if (batch_start // batch_size) % 10 == 0:
-            done = batch_start + n_batch
-            print(f"  Predictions: {done:,}/{len(valid_pairs):,} users")
+        for i, (uid, _) in enumerate(chunk_pairs):
+            predictions[uid] = [idx_to_item[int(j)] for j in topk[i]]
 
     model.train()
     return predictions
-
-
-def _generate_predictions_chunked(
-    model: nnx.Module,
-    target_user_ids: list[str],
-    user_features: dict[str, np.ndarray],
-    item_features: dict[str, np.ndarray],
-    user_to_idx: dict[str, int],
-    idx_to_item: dict[int, str],
-    k: int = 12,
-    user_batch_size: int = 64,
-    item_chunk_size: int = 2048,
-    item_embeddings: np.ndarray | None = None,
-    user_embeddings: np.ndarray | None = None,
-    output_path: Path | None = None,
-    save_every: int = 50,
-) -> dict[str, list[str]]:
-    """Chunked scoring: (user_batch × item_chunk) blocks to control memory.
-
-    Instead of scoring all 105K items at once per user batch, scores items
-    in chunks and merges top-K across chunks. Memory per step ≈ training batch.
-
-    For KAR models: pass item_embeddings/user_embeddings to construct KARInput.
-    If output_path is set, saves incrementally and supports resume from partial results.
-    """
-    use_kar = item_embeddings is not None and user_embeddings is not None
-    n_items = item_features["categorical"].shape[0]
-    item_cat = item_features["categorical"]
-    item_num = item_features["numerical"]
-
-    # Resume: load existing predictions and skip done users
-    done_uids: set[str] = set()
-    if output_path and output_path.exists():
-        existing = json.loads(output_path.read_text())
-        done_uids = {uid for uid, preds in existing.items() if preds}
-        print(f"  Resuming: {len(done_uids):,} users already done")
-    else:
-        existing = {}
-
-    valid_pairs = [
-        (uid, user_to_idx[uid]) for uid in target_user_ids
-        if uid in user_to_idx and uid not in done_uids
-    ]
-    invalid_users = {uid for uid in target_user_ids if uid not in user_to_idx}
-
-    model.eval()
-    predictions: dict[str, list[str]] = {**existing, **{uid: [] for uid in invalid_users}}
-
-    for ub_start in range(0, len(valid_pairs), user_batch_size):
-        batch_pairs = valid_pairs[ub_start:ub_start + user_batch_size]
-        batch_uids = [p[0] for p in batch_pairs]
-        batch_idxs = np.array([p[1] for p in batch_pairs])
-        n_batch = len(batch_idxs)
-
-        u_cat = jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32)
-        u_num = jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32)
-
-        # Pre-load user BGE embeddings for this batch (KAR only)
-        u_emb_batch = None
-        if use_kar:
-            u_emb_batch = jnp.array(user_embeddings[batch_idxs], dtype=jnp.float32)
-
-        # Score items in chunks, collect all scores
-        all_scores = []
-        for ic_start in range(0, n_items, item_chunk_size):
-            ic_end = min(ic_start + item_chunk_size, n_items)
-            chunk_size = ic_end - ic_start
-
-            i_cat_chunk = jnp.array(item_cat[ic_start:ic_end], dtype=jnp.int32)
-            i_num_chunk = jnp.array(item_num[ic_start:ic_end], dtype=jnp.float32)
-
-            # Tile: (n_batch, ...) × (chunk_size, ...) → (n_batch * chunk_size, ...)
-            u_cat_tiled = jnp.repeat(u_cat, chunk_size, axis=0)
-            u_num_tiled = jnp.repeat(u_num, chunk_size, axis=0)
-            i_cat_tiled = jnp.tile(i_cat_chunk, (n_batch, 1))
-            i_num_tiled = jnp.tile(i_num_chunk, (n_batch, 1))
-
-            base_input = DeepFMInput(
-                user_cat=u_cat_tiled, user_num=u_num_tiled,
-                item_cat=i_cat_tiled, item_num=i_num_tiled,
-            )
-
-            if use_kar:
-                from src.kar.hybrid import KARInput
-                i_emb_chunk = jnp.array(item_embeddings[ic_start:ic_end], dtype=jnp.float32)
-                h_fact_tiled = jnp.tile(i_emb_chunk, (n_batch, 1))
-                h_reason_tiled = jnp.repeat(u_emb_batch, chunk_size, axis=0)
-                inp = KARInput(base_input=base_input, h_fact=h_fact_tiled, h_reason=h_reason_tiled)
-            else:
-                inp = base_input
-
-            chunk_scores = model.predict_proba(inp)  # (n_batch * chunk_size,)
-            all_scores.append(chunk_scores.reshape(n_batch, chunk_size))
-
-        # Concat all chunks → (n_batch, n_items) → top-K
-        scores = jnp.concatenate(all_scores, axis=1)
-        top_k = jnp.argsort(scores, axis=-1)[:, ::-1][:, :k]
-        top_k_np = np.array(top_k)
-
-        for i, uid in enumerate(batch_uids):
-            predictions[uid] = [idx_to_item[int(idx)] for idx in top_k_np[i]]
-
-        batch_idx = ub_start // user_batch_size
-        if batch_idx % 10 == 0:
-            done = ub_start + n_batch
-            total_done = done + len(done_uids)
-            total_target = len(valid_pairs) + len(done_uids)
-            print(f"  Predictions: {total_done:,}/{total_target:,} users")
-
-        # Incremental save
-        if output_path and batch_idx > 0 and batch_idx % save_every == 0:
-            output_path.write_text(json.dumps(predictions))
-
-    # Final save
-    if output_path:
-        output_path.write_text(json.dumps(predictions))
-
-    model.train()
-    return predictions
-
-
-# ---------------------------------------------------------------------------
-# Stage 1 Candidate Extraction (for Re-Ranker)
-# ---------------------------------------------------------------------------
-
-
-def extract_stage1_candidates(
-    model: nnx.Module,
-    target_user_ids: list[str],
-    user_features: dict[str, np.ndarray],
-    item_features: dict[str, np.ndarray],
-    user_to_idx: dict[str, int],
-    top_k: int = 100,
-    batch_size: int = 64,
-) -> dict[str, np.ndarray]:
-    """Extract top-K candidates with scores from Stage 1 model.
-
-    Extends _generate_predictions_batched() pattern to return scores + indices
-    instead of just item IDs. For feature-based models (DeepFM, DCNv2).
-
-    Args:
-        model: Trained Stage 1 model with predict_proba().
-        target_user_ids: User IDs to generate candidates for.
-        user_features: {categorical: (n_users, 3), numerical: (n_users, 8)}.
-        item_features: {categorical: (n_items, 5), numerical: (n_items, 2)}.
-        user_to_idx: user_id → feature index mapping.
-        top_k: Number of candidates per user.
-        batch_size: Users per forward-pass batch.
-
-    Returns:
-        dict with:
-        - user_indices: (N,) int32 — user feature indices
-        - candidate_indices: (N, K) int32 — item feature indices
-        - candidate_scores: (N, K) float32 — Stage 1 scores (descending)
-    """
-    n_items = item_features["categorical"].shape[0]
-    item_cat_jax = jnp.array(item_features["categorical"], dtype=jnp.int32)
-    item_num_jax = jnp.array(item_features["numerical"], dtype=jnp.float32)
-
-    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
-
-    all_user_indices: list[int] = []
-    all_candidate_indices: list[np.ndarray] = []
-    all_candidate_scores: list[np.ndarray] = []
-
-    model.eval()
-
-    for batch_start in range(0, len(valid_pairs), batch_size):
-        batch_pairs = valid_pairs[batch_start : batch_start + batch_size]
-        batch_idxs = np.array([p[1] for p in batch_pairs])
-        n_batch = len(batch_idxs)
-
-        u_cat_tiled = jnp.repeat(
-            jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32), n_items, axis=0
-        )
-        u_num_tiled = jnp.repeat(
-            jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32), n_items, axis=0
-        )
-        i_cat_tiled = jnp.tile(item_cat_jax, (n_batch, 1))
-        i_num_tiled = jnp.tile(item_num_jax, (n_batch, 1))
-
-        inp = DeepFMInput(
-            user_cat=u_cat_tiled, user_num=u_num_tiled,
-            item_cat=i_cat_tiled, item_num=i_num_tiled,
-        )
-        scores = model.predict_proba(inp).reshape(n_batch, n_items)
-
-        top_k_idx = jnp.argsort(scores, axis=-1)[:, ::-1][:, :top_k]
-        top_k_scores = jnp.take_along_axis(scores, top_k_idx, axis=-1)
-
-        all_user_indices.extend(batch_idxs.tolist())
-        all_candidate_indices.append(np.array(top_k_idx))
-        all_candidate_scores.append(np.array(top_k_scores))
-
-        done = batch_start + n_batch
-        if (batch_start // batch_size) % 20 == 0:
-            print(f"  Stage 1 extraction: {done:,}/{len(valid_pairs):,} users")
-
-    model.train()
-
-    return {
-        "user_indices": np.array(all_user_indices, dtype=np.int32),
-        "candidate_indices": np.concatenate(all_candidate_indices, axis=0),
-        "candidate_scores": np.concatenate(all_candidate_scores, axis=0),
-    }
-
-
-def extract_stage1_candidates_kar(
-    model: Any,
-    target_user_ids: list[str],
-    user_features: dict[str, np.ndarray],
-    item_features: dict[str, np.ndarray],
-    item_embeddings: np.ndarray,
-    user_embeddings: np.ndarray,
-    user_to_idx: dict[str, int],
-    top_k: int = 100,
-    batch_size: int = 2,
-    backbone_name: str = "deepfm",
-    extract_intermediates: bool = False,
-) -> dict[str, np.ndarray]:
-    """Extract top-K candidates with scores from KAR model.
-
-    Like extract_stage1_candidates() but for KARModel — constructs KARInput
-    with BGE embeddings and optionally extracts Expert/Gating intermediates
-    for the top-K candidates (2nd pass, memory-safe).
-
-    Args:
-        model: Trained KARModel with predict_proba() and forward_with_intermediates().
-        target_user_ids: User IDs to generate candidates for.
-        user_features: {categorical: (n_users, 3), numerical: (n_users, 8)}.
-        item_features: {categorical: (n_items, 5), numerical: (n_items, 2)}.
-        item_embeddings: (n_items, 768) aligned BGE item embeddings.
-        user_embeddings: (n_users, 768) aligned BGE user embeddings.
-        user_to_idx: user_id → feature index mapping.
-        top_k: Number of candidates per user.
-        batch_size: Users per forward-pass batch (small due to KAR memory).
-        backbone_name: Base backbone name (deepfm, dcnv2, etc.).
-        extract_intermediates: If True, extract e_fact/e_reason/g_fact/g_reason
-            for top-K candidates via a second pass.
-
-    Returns:
-        dict with:
-        - user_indices: (N,) int32
-        - candidate_indices: (N, K) int32
-        - candidate_scores: (N, K) float32
-        When extract_intermediates=True, also:
-        - kar_e_fact: (N, K, 64) float32
-        - kar_e_reason: (N, K, 64) float32
-        - kar_g_fact: (N, K, 1) float32
-        - kar_g_reason: (N, K, 1) float32
-    """
-    from src.kar.hybrid import KARInput
-
-    n_items = item_features["categorical"].shape[0]
-    item_cat_jax = jnp.array(item_features["categorical"], dtype=jnp.int32)
-    item_num_jax = jnp.array(item_features["numerical"], dtype=jnp.float32)
-    item_emb_jax = jnp.array(item_embeddings, dtype=jnp.float32)
-
-    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
-
-    all_user_indices: list[int] = []
-    all_candidate_indices: list[np.ndarray] = []
-    all_candidate_scores: list[np.ndarray] = []
-    all_e_fact: list[np.ndarray] = []
-    all_e_reason: list[np.ndarray] = []
-    all_g_fact: list[np.ndarray] = []
-    all_g_reason: list[np.ndarray] = []
-
-    model.eval()
-    spec = get_backbone(backbone_name)
-
-    for batch_start in range(0, len(valid_pairs), batch_size):
-        batch_pairs = valid_pairs[batch_start : batch_start + batch_size]
-        batch_idxs = np.array([p[1] for p in batch_pairs])
-        n_batch = len(batch_idxs)
-
-        # --- Build KARInput for full catalog scoring ---
-        h_fact = jnp.tile(item_emb_jax, (n_batch, 1))  # (B*n_items, 768)
-        h_reason = jnp.repeat(
-            jnp.array(user_embeddings[batch_idxs], dtype=jnp.float32), n_items, axis=0
-        )  # (B*n_items, 768)
-
-        if spec.needs_graph:
-            user_idx_arr = jnp.repeat(jnp.array(batch_idxs, dtype=jnp.int32), n_items)
-            item_idx_arr = jnp.tile(jnp.arange(n_items, dtype=jnp.int32), n_batch)
-            base_input = LightGCNInput(user_idx=user_idx_arr, item_idx=item_idx_arr)
-        else:
-            # feature-based: deepfm, dcnv2
-            u_cat_tiled = jnp.repeat(
-                jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32),
-                n_items, axis=0,
-            )
-            u_num_tiled = jnp.repeat(
-                jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32),
-                n_items, axis=0,
-            )
-            i_cat_tiled = jnp.tile(item_cat_jax, (n_batch, 1))
-            i_num_tiled = jnp.tile(item_num_jax, (n_batch, 1))
-            base_input = DeepFMInput(
-                user_cat=u_cat_tiled, user_num=u_num_tiled,
-                item_cat=i_cat_tiled, item_num=i_num_tiled,
-            )
-
-        kar_input = KARInput(base_input=base_input, h_fact=h_fact, h_reason=h_reason)
-        scores = model.predict_proba(kar_input).reshape(n_batch, n_items)
-
-        top_k_idx = jnp.argsort(scores, axis=-1)[:, ::-1][:, :top_k]
-        top_k_scores = jnp.take_along_axis(scores, top_k_idx, axis=-1)
-
-        all_user_indices.extend(batch_idxs.tolist())
-        all_candidate_indices.append(np.array(top_k_idx))
-        all_candidate_scores.append(np.array(top_k_scores))
-
-        # --- 2nd pass: extract intermediates for top-K only ---
-        if extract_intermediates:
-            top_k_idx_np = np.array(top_k_idx)  # (B, K)
-            for b in range(n_batch):
-                u_idx = batch_idxs[b]
-                cand_idxs = top_k_idx_np[b]  # (K,)
-
-                h_f = jnp.array(item_embeddings[cand_idxs], dtype=jnp.float32)  # (K, 768)
-                h_r = jnp.tile(
-                    jnp.array(user_embeddings[u_idx], dtype=jnp.float32), (top_k, 1)
-                )  # (K, 768)
-
-                if spec.needs_graph:
-                    b_input = LightGCNInput(
-                        user_idx=jnp.full((top_k,), u_idx, dtype=jnp.int32),
-                        item_idx=jnp.array(cand_idxs, dtype=jnp.int32),
-                    )
-                else:
-                    u_cat_k = jnp.tile(
-                        jnp.array(user_features["categorical"][u_idx], dtype=jnp.int32),
-                        (top_k, 1),
-                    )
-                    u_num_k = jnp.tile(
-                        jnp.array(user_features["numerical"][u_idx], dtype=jnp.float32),
-                        (top_k, 1),
-                    )
-                    i_cat_k = jnp.array(
-                        item_features["categorical"][cand_idxs], dtype=jnp.int32
-                    )
-                    i_num_k = jnp.array(
-                        item_features["numerical"][cand_idxs], dtype=jnp.float32
-                    )
-                    b_input = DeepFMInput(
-                        user_cat=u_cat_k, user_num=u_num_k,
-                        item_cat=i_cat_k, item_num=i_num_k,
-                    )
-
-                kar_k = KARInput(base_input=b_input, h_fact=h_f, h_reason=h_r)
-                _, intermediates = model.forward_with_intermediates(kar_k)
-                all_e_fact.append(np.array(intermediates["e_fact"]))      # (K, 64)
-                all_e_reason.append(np.array(intermediates["e_reason"]))  # (K, 64)
-                all_g_fact.append(np.array(intermediates["g_fact"]))      # (K, 1)
-                all_g_reason.append(np.array(intermediates["g_reason"]))  # (K, 1)
-
-        done = batch_start + n_batch
-        if (batch_start // batch_size) % 20 == 0:
-            print(f"  KAR Stage 1 extraction: {done:,}/{len(valid_pairs):,} users")
-
-    model.train()
-
-    result = {
-        "user_indices": np.array(all_user_indices, dtype=np.int32),
-        "candidate_indices": np.concatenate(all_candidate_indices, axis=0),
-        "candidate_scores": np.concatenate(all_candidate_scores, axis=0),
-    }
-
-    if extract_intermediates and all_e_fact:
-        n_users = len(all_user_indices)
-        result["kar_e_fact"] = np.stack(all_e_fact).reshape(n_users, top_k, -1)
-        result["kar_e_reason"] = np.stack(all_e_reason).reshape(n_users, top_k, -1)
-        result["kar_g_fact"] = np.stack(all_g_fact).reshape(n_users, top_k, -1)
-        result["kar_g_reason"] = np.stack(all_g_reason).reshape(n_users, top_k, -1)
-
-    return result
-
-
-def extract_kar_intermediates_for_candidates(
-    model: Any,
-    candidates: dict[str, np.ndarray],
-    user_features: dict[str, np.ndarray],
-    item_features: dict[str, np.ndarray],
-    item_embeddings: np.ndarray,
-    user_embeddings: np.ndarray,
-    backbone_name: str = "deepfm",
-) -> dict[str, np.ndarray]:
-    """Extract KAR intermediates for an existing candidate set (e.g., after blending).
-
-    Used when multi-source candidates are blended and intermediates need to be
-    computed for the final candidate pool rather than the original Stage 1 pool.
-
-    Args:
-        model: Trained KARModel.
-        candidates: {user_indices (N,), candidate_indices (N, K), candidate_scores (N, K)}.
-        user_features: {categorical, numerical}.
-        item_features: {categorical, numerical}.
-        item_embeddings: (n_items, 768).
-        user_embeddings: (n_users, 768).
-        backbone_name: Base backbone name.
-
-    Returns:
-        dict with kar_e_fact (N,K,64), kar_e_reason (N,K,64),
-        kar_g_fact (N,K,1), kar_g_reason (N,K,1).
-    """
-    from src.kar.hybrid import KARInput
-
-    user_indices = candidates["user_indices"]
-    candidate_indices = candidates["candidate_indices"]
-    n_users = user_indices.shape[0]
-    top_k = candidate_indices.shape[1]
-    spec = get_backbone(backbone_name)
-
-    all_e_fact: list[np.ndarray] = []
-    all_e_reason: list[np.ndarray] = []
-    all_g_fact: list[np.ndarray] = []
-    all_g_reason: list[np.ndarray] = []
-
-    model.eval()
-
-    for i in range(n_users):
-        u_idx = int(user_indices[i])
-        cand_idxs = candidate_indices[i]  # (K,)
-
-        h_f = jnp.array(item_embeddings[cand_idxs], dtype=jnp.float32)
-        h_r = jnp.tile(
-            jnp.array(user_embeddings[u_idx], dtype=jnp.float32), (top_k, 1)
-        )
-
-        if spec.needs_graph:
-            b_input = LightGCNInput(
-                user_idx=jnp.full((top_k,), u_idx, dtype=jnp.int32),
-                item_idx=jnp.array(cand_idxs, dtype=jnp.int32),
-            )
-        else:
-            u_cat_k = jnp.tile(
-                jnp.array(user_features["categorical"][u_idx], dtype=jnp.int32),
-                (top_k, 1),
-            )
-            u_num_k = jnp.tile(
-                jnp.array(user_features["numerical"][u_idx], dtype=jnp.float32),
-                (top_k, 1),
-            )
-            i_cat_k = jnp.array(item_features["categorical"][cand_idxs], dtype=jnp.int32)
-            i_num_k = jnp.array(item_features["numerical"][cand_idxs], dtype=jnp.float32)
-            b_input = DeepFMInput(
-                user_cat=u_cat_k, user_num=u_num_k,
-                item_cat=i_cat_k, item_num=i_num_k,
-            )
-
-        kar_k = KARInput(base_input=b_input, h_fact=h_f, h_reason=h_r)
-        _, intermediates = model.forward_with_intermediates(kar_k)
-        all_e_fact.append(np.array(intermediates["e_fact"]))
-        all_e_reason.append(np.array(intermediates["e_reason"]))
-        all_g_fact.append(np.array(intermediates["g_fact"]))
-        all_g_reason.append(np.array(intermediates["g_reason"]))
-
-        if (i + 1) % 500 == 0:
-            print(f"  KAR intermediates: {i + 1:,}/{n_users:,} users")
-
-    model.train()
-
-    return {
-        "kar_e_fact": np.stack(all_e_fact),      # (N, K, 64)
-        "kar_e_reason": np.stack(all_e_reason),  # (N, K, 64)
-        "kar_g_fact": np.stack(all_g_fact),      # (N, K, 1)
-        "kar_g_reason": np.stack(all_g_reason),  # (N, K, 1)
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1069,6 +641,7 @@ def validate_sample(
     backbone_name: str = "deepfm",
     sequences: np.ndarray | None = None,
     seq_lengths: np.ndarray | None = None,
+    chunk_users: int = 32,
 ) -> dict[str, float]:
     """Quick validation on sampled users. Returns metric dict."""
     gt_path = data_dir / f"{split}_ground_truth.json"
@@ -1083,7 +656,7 @@ def validate_sample(
     predictions = generate_predictions(
         model, sample_users, user_features, item_features, user_to_idx, idx_to_item, k,
         backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
-        batch_size=1,  # per-user scoring to avoid OOM during validation
+        batch_size=chunk_users,  # batched full-catalog scoring (Track B)
     )
 
     sample_gt = {u: ground_truth[u] for u in sample_users}
@@ -1096,6 +669,30 @@ def validate_sample(
         "ndcg_at_12": result.ndcg_at_k,
         "mrr": result.mrr,
     }
+
+
+# ---------------------------------------------------------------------------
+# Eval cohort split (FIX C: fairness — same user set as baseline)
+# ---------------------------------------------------------------------------
+
+
+def split_eval_cohorts(
+    ground_truth_users: list[str],
+    user_to_idx: dict[str, int],
+) -> dict[str, set[str]]:
+    """Split eval users into feature-capable vs cold-start cohorts.
+
+    feature_capable = users present in ``user_to_idx`` (have train features, so
+    the feature-based model can actually score them). cold_start = users in the
+    ground truth but NOT in ``user_to_idx`` (no train interactions → the model
+    has no signal; these are where popularity fallback matters).
+
+    The headline metric is reported on ``feature_capable`` so DeepFM and the
+    popularity baseline are compared on the IDENTICAL scorable user set.
+    """
+    feature_capable = {u for u in ground_truth_users if u in user_to_idx}
+    cold_start = {u for u in ground_truth_users if u not in user_to_idx}
+    return {"feature_capable": feature_capable, "cold_start": cold_start}
 
 
 # ---------------------------------------------------------------------------
@@ -1166,7 +763,43 @@ def run_training(
         print(f"  Sequences: max_len={sequences.shape[1]}, "
               f"users_with_seq={int(np.sum(seq_lengths > 0)):,}")
 
-    # Note: z-score normalization removed to match v1 baseline conditions
+    # --- Normalize numerical features (log1p heavy counts → z-score, in-memory) ---
+    # Heavy long-tailed count columns are log1p'd FIRST to tame extreme tails
+    # (e.g. item total_purchases max 44761 ≈ 61σ) before z-scoring. Stats are
+    # persisted to feature_stats.json so inference reproduces the same transform.
+    # In-place mutation keeps user_features/item_features shared between the
+    # training loader and the eval scorer (train/eval consistency).
+    log1p_cols_by_side = {
+        "user": ("n_purchases", "days_since_first_purchase", "days_since_last_purchase"),
+        "item": ("total_purchases",),
+    }
+    feature_stats: dict[str, Any] = {}
+    for feat_dict, name, num_names in [
+        (user_features, "user", feature_meta["user_num_names"]),
+        (item_features, "item", feature_meta["item_num_names"]),
+    ]:
+        num = feat_dict["numerical"].astype(np.float32)
+        log_cols = [c for c in log1p_cols_by_side[name] if c in num_names]
+        log_idx = [num_names.index(c) for c in log_cols]
+        if log_idx:
+            num[:, log_idx] = np.log1p(np.maximum(num[:, log_idx], 0.0))
+        mu = num.mean(axis=0, keepdims=True)
+        sigma = num.std(axis=0, keepdims=True) + 1e-8
+        feat_dict["numerical"] = ((num - mu) / sigma).astype(np.float32)
+        feature_stats[name] = {
+            "num_names": list(num_names),
+            "log1p_cols": log_cols,
+            "mean": mu.squeeze(0).tolist(),
+            "std": sigma.squeeze(0).tolist(),
+        }
+        print(f"  {name} numerical normalized (log1p={log_cols}): "
+              f"mean≈{feat_dict['numerical'].mean():.4f}, "
+              f"std≈{feat_dict['numerical'].std():.4f}")
+
+    # Persist normalization stats next to the features for inference reproducibility.
+    (features_dir / "feature_stats.json").write_text(
+        json.dumps(feature_stats, indent=2)
+    )
 
     print(f"  Users: {feature_meta['n_users']:,}")
     print(f"  Items: {feature_meta['n_items']:,}")
@@ -1209,7 +842,9 @@ def run_training(
     print(f"  Steps per epoch: {n_steps:,}")
 
     # Build correct train step for this backbone
-    step_fn = make_train_step(backbone_name, model_config)
+    step_fn = make_train_step(
+        backbone_name, model_config, getattr(train_config, "bce_pos_weight", 1.0)
+    )
 
     # Determine batch dtype conversion based on backbone
     is_graph = spec.needs_graph
@@ -1262,11 +897,16 @@ def run_training(
                     data_sharding,
                 )
             else:
+                # int32 for index/categorical/length/history keys; float32 otherwise.
+                def _feat_dtype(k: str) -> Any:
+                    return (
+                        jnp.int32
+                        if any(tok in k for tok in ("cat", "idx", "len", "history"))
+                        else jnp.float32
+                    )
+
                 jax_batch = jax.device_put(
-                    {
-                        k: jnp.array(v, dtype=jnp.int32 if "cat" in k else jnp.float32)
-                        for k, v in batch.items()
-                    },
+                    {k: jnp.array(v, dtype=_feat_dtype(k)) for k, v in batch.items()},
                     data_sharding,
                 )
 
@@ -1292,7 +932,7 @@ def run_training(
                     data_dir,
                     features_dir,
                     split,
-                    train_config.val_sample_users,
+                    train_config.midval_sample_users,
                     user_features,
                     item_features,
                     user_to_idx,
@@ -1301,6 +941,7 @@ def run_training(
                     backbone_name=backbone_name,
                     sequences=sequences,
                     seq_lengths=seq_lengths,
+                    chunk_users=train_config.pred_chunk_users,
                 )
                 print(
                     f"    MAP@12={val_metrics['map_at_12']:.6f} "
@@ -1331,6 +972,7 @@ def run_training(
             backbone_name=backbone_name,
             sequences=sequences,
             seq_lengths=seq_lengths,
+            chunk_users=train_config.pred_chunk_users,
         )
         print(
             f"  MAP@12={val_metrics['map_at_12']:.6f} "
@@ -1379,7 +1021,7 @@ def run_training(
     predictions = generate_predictions(
         model, target_users, user_features, item_features, user_to_idx, idx_to_item,
         backbone_name=backbone_name, sequences=sequences, seq_lengths=seq_lengths,
-        batch_size=64,  # 64 users × 105K items per batch
+        batch_size=train_config.pred_chunk_users,  # batched full-catalog scoring (Track B)
     )
 
     pred_path = predictions_dir / f"{backbone_name}_{split}.json"
@@ -1387,30 +1029,78 @@ def run_training(
     print(f"  Predictions saved: {pred_path}")
     print(f"  Users with predictions: {sum(1 for v in predictions.values() if v):,}")
 
-    # Final eval on all target users
-    print("[train] Final evaluation (all target users)...")
+    # --- Final evaluation: cohort split for fair comparison (FIX C) ---
+    # HEADLINE = feature_capable cohort (users in user_to_idx). This is the SAME
+    # user set the Popularity baseline must be filtered to in scripts/train.py,
+    # so the two are compared apples-to-apples. cold_start = users with no train
+    # features (model has no signal) — reported separately, never in headline.
     config = EvalConfig(k=12)
-    final_result = evaluate(predictions, ground_truth, config)
-    final_metrics = {
-        "map_at_12": final_result.map_at_k,
-        "hr_at_12": final_result.hr_at_k,
-        "ndcg_at_12": final_result.ndcg_at_k,
-        "mrr": final_result.mrr,
-    }
+    cohorts = split_eval_cohorts(target_users, user_to_idx)
+    n_feat = len(cohorts["feature_capable"])
+    n_cold = len(cohorts["cold_start"])
     print(
-        f"  MAP@12={final_metrics['map_at_12']:.6f} "
+        f"[train] Final evaluation — cohorts: feature_capable={n_feat:,} "
+        f"cold_start={n_cold:,} (headline = feature_capable)"
+    )
+
+    cohort_results = evaluate_by_cohort(predictions, ground_truth, cohorts, config)
+
+    def _metrics(r: Any) -> dict[str, float]:
+        return {
+            "map_at_12": r.map_at_k,
+            "hr_at_12": r.hr_at_k,
+            "ndcg_at_12": r.ndcg_at_k,
+            "mrr": r.mrr,
+        }
+
+    cohort_metrics = {name: _metrics(r) for name, r in cohort_results.items()}
+
+    # Also keep the all-users number for reference / backward compatibility.
+    all_result = evaluate(predictions, ground_truth, config)
+    all_metrics = _metrics(all_result)
+
+    # Headline = feature_capable (falls back to all-users if no idx map at all).
+    final_metrics = cohort_metrics.get("feature_capable", all_metrics)
+
+    print(
+        f"  [headline: feature_capable, n={n_feat:,}] "
+        f"MAP@12={final_metrics['map_at_12']:.6f} "
         f"HR@12={final_metrics['hr_at_12']:.6f} "
         f"NDCG@12={final_metrics['ndcg_at_12']:.6f} "
         f"MRR={final_metrics['mrr']:.6f}"
     )
+    if n_cold:
+        cm = cohort_metrics["cold_start"]
+        print(
+            f"  [cohort: cold_start, n={n_cold:,}] "
+            f"MAP@12={cm['map_at_12']:.6f} HR@12={cm['hr_at_12']:.6f} "
+            f"NDCG@12={cm['ndcg_at_12']:.6f} MRR={cm['mrr']:.6f}"
+        )
+    print(
+        f"  [all_users, n={len(target_users):,}] "
+        f"MAP@12={all_metrics['map_at_12']:.6f} HR@12={all_metrics['hr_at_12']:.6f}"
+    )
 
+    metrics_out = {
+        "headline_cohort": "feature_capable",
+        "headline": final_metrics,
+        "cohorts": cohort_metrics,
+        "cohort_sizes": {"feature_capable": n_feat, "cold_start": n_cold},
+        "all_users": all_metrics,
+        # Flattened headline keys kept for backward compatibility with readers.
+        **final_metrics,
+    }
     metrics_path = model_dir / f"{backbone_name}_metrics.json"
-    metrics_path.write_text(json.dumps(final_metrics, indent=2))
+    metrics_path.write_text(json.dumps(metrics_out, indent=2))
 
     if wandb_run is not None:
         import wandb
 
-        wandb.log({f"final/{k}": v for k, v in final_metrics.items()})
+        wandb.log(
+            {f"final/{k}": v for k, v in final_metrics.items()}
+            | {f"final_cold/{k}": v for k, v in cohort_metrics.get("cold_start", {}).items()}
+            | {f"final_all/{k}": v for k, v in all_metrics.items()}
+        )
         wandb.finish()
 
     return TrainResult(
@@ -1520,6 +1210,8 @@ def _build_kar_input(batch: dict[str, jax.Array], backbone_name: str) -> Any:
         user_num=batch["user_num"],
         item_cat=batch["item_cat"],
         item_num=batch["item_num"],
+        user_idx=batch.get("user_idx"),
+        item_idx=batch.get("item_idx"),
     )
     return KARInput(
         base_input=base_input,
@@ -1580,7 +1272,7 @@ def make_kar_train_step_stage2(
                 intermediates["e_reason"], jax.lax.stop_gradient(x_user_proj),
                 align_weight=align_weight,
                 diversity_weight=diversity_weight,
-                include_rec_loss=True,
+                include_rec_loss=False,
             )
             return total
 
@@ -1686,11 +1378,14 @@ def score_full_catalog_kar(
         # feature-based: deepfm, dcnv2
         u_cat = np.tile(user_features["categorical"][user_idx], (n_items, 1))
         u_num = np.tile(user_features["numerical"][user_idx], (n_items, 1))
+        use_id_embed = getattr(getattr(model, "backbone", None), "_use_id_embed", False)
         base_input = DeepFMInput(
             user_cat=jnp.array(u_cat, dtype=jnp.int32),
             user_num=jnp.array(u_num, dtype=jnp.float32),
             item_cat=jnp.array(item_features["categorical"], dtype=jnp.int32),
             item_num=jnp.array(item_features["numerical"], dtype=jnp.float32),
+            user_idx=(jnp.full((n_items,), user_idx, dtype=jnp.int32) if use_id_embed else None),
+            item_idx=(jnp.arange(n_items, dtype=jnp.int32) if use_id_embed else None),
         )
         kar_input = KARInput(base_input=base_input, h_fact=h_fact_all, h_reason=h_reason_user)
 
@@ -1701,6 +1396,106 @@ def score_full_catalog_kar(
 
     top_k = jnp.argsort(scores)[::-1][:k]
     return top_k.tolist()
+
+
+def generate_predictions_kar(
+    model: Any,
+    target_user_ids: list[str],
+    user_features: dict[str, np.ndarray],
+    item_features: dict[str, np.ndarray],
+    item_embeddings: np.ndarray,
+    user_embeddings: np.ndarray,
+    user_to_idx: dict[str, int],
+    idx_to_item: dict[int, str],
+    k: int = 12,
+    backbone_name: str = "deepfm",
+    sequences: np.ndarray | None = None,
+    seq_lengths: np.ndarray | None = None,
+    batch_size: int = 16,
+) -> dict[str, list[str]]:
+    """Batched KAR full-catalog scoring (replaces the per-user KAR val loop).
+
+    Scores ``batch_size`` users × all items per forward. KAR rows carry two
+    768-d embeddings (h_fact/h_reason) so the chunk is kept smaller than the
+    plain backbone path; caller owns sizing via ``batch_size``.
+    """
+    from src.kar.hybrid import KARInput
+
+    spec = get_backbone(backbone_name)
+    valid_pairs = [(uid, user_to_idx[uid]) for uid in target_user_ids if uid in user_to_idx]
+    predictions: dict[str, list[str]] = {
+        uid: [] for uid in target_user_ids if uid not in user_to_idx
+    }
+
+    n_items = item_embeddings.shape[0]
+    h_fact_all = jnp.array(item_embeddings, dtype=jnp.float32)  # (n_items, 768)
+    item_cat_jax = jnp.array(item_features["categorical"], dtype=jnp.int32)
+    item_num_jax = jnp.array(item_features["numerical"], dtype=jnp.float32)
+    item_arange = jnp.arange(n_items, dtype=jnp.int32)
+
+    model.eval()
+    chunk = batch_size if not (spec.needs_graph or spec.needs_sequence) else max(batch_size, 256)
+
+    for s in range(0, len(valid_pairs), chunk):
+        chunk_pairs = valid_pairs[s:s + chunk]
+        batch_idxs = np.array([p[1] for p in chunk_pairs])
+        nb = len(batch_idxs)
+
+        h_fact = jnp.tile(h_fact_all, (nb, 1))  # (nb*n_items, 768)
+        u_emb = jnp.array(user_embeddings[batch_idxs], dtype=jnp.float32)  # (nb, 768)
+        h_reason = jnp.repeat(u_emb, n_items, axis=0)  # (nb*n_items, 768)
+
+        if spec.needs_graph:
+            base_input = LightGCNInput(
+                user_idx=jnp.repeat(jnp.array(batch_idxs, dtype=jnp.int32), n_items),
+                item_idx=jnp.tile(item_arange, nb),
+            )
+            kar_input = KARInput(base_input=base_input, h_fact=h_fact, h_reason=h_reason)
+        elif backbone_name == "sasrec":
+            assert sequences is not None and seq_lengths is not None
+            hist = jnp.repeat(jnp.array(sequences[batch_idxs], dtype=jnp.int32), n_items, axis=0)
+            h_len = jnp.repeat(jnp.array(seq_lengths[batch_idxs], dtype=jnp.int32), n_items, axis=0)
+            base_input = SASRecInput(history=hist, hist_len=h_len)
+            target_idxs = jnp.tile(jnp.arange(1, n_items + 1, dtype=jnp.int32), nb)
+            kar_input = KARInput(
+                base_input=base_input, h_fact=h_fact, h_reason=h_reason,
+                target_item_idx=target_idxs,
+            )
+        elif backbone_name == "din":
+            assert sequences is not None and seq_lengths is not None
+            u_cat = jnp.repeat(jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32), n_items, axis=0)
+            u_num = jnp.repeat(jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32), n_items, axis=0)
+            hist = jnp.repeat(jnp.array(sequences[batch_idxs], dtype=jnp.int32), n_items, axis=0)
+            h_len = jnp.repeat(jnp.array(seq_lengths[batch_idxs], dtype=jnp.int32), n_items, axis=0)
+            base_input = DINInput(
+                user_cat=u_cat, user_num=u_num,
+                item_cat=jnp.tile(item_cat_jax, (nb, 1)),
+                item_num=jnp.tile(item_num_jax, (nb, 1)),
+                history=hist, hist_len=h_len,
+            )
+            kar_input = KARInput(base_input=base_input, h_fact=h_fact, h_reason=h_reason)
+        else:  # deepfm, dcnv2
+            u_cat = jnp.repeat(jnp.array(user_features["categorical"][batch_idxs], dtype=jnp.int32), n_items, axis=0)
+            u_num = jnp.repeat(jnp.array(user_features["numerical"][batch_idxs], dtype=jnp.float32), n_items, axis=0)
+            use_id_embed = getattr(getattr(model, "backbone", None), "_use_id_embed", False)
+            base_input = DeepFMInput(
+                user_cat=u_cat, user_num=u_num,
+                item_cat=jnp.tile(item_cat_jax, (nb, 1)),
+                item_num=jnp.tile(item_num_jax, (nb, 1)),
+                user_idx=(jnp.repeat(jnp.array(batch_idxs, dtype=jnp.int32), n_items)
+                          if use_id_embed else None),
+                item_idx=(jnp.tile(item_arange, nb) if use_id_embed else None),
+            )
+            kar_input = KARInput(base_input=base_input, h_fact=h_fact, h_reason=h_reason)
+
+        logits = model(kar_input)  # (nb*n_items,)
+        scores = jax.nn.sigmoid(logits).reshape(nb, n_items)
+        topk = _topk_indices(scores, k)
+        for i, (uid, _) in enumerate(chunk_pairs):
+            predictions[uid] = [idx_to_item[int(j)] for j in topk[i]]
+
+    model.train()
+    return predictions
 
 
 def run_kar_training(
@@ -1800,11 +1595,9 @@ def run_kar_training(
         except Exception:
             wandb_run = None
 
-    # ===== Stage 1: Backbone Pre-train (with early stopping) =====
-    print(f"\n[kar-train] === Stage 1: Backbone Pre-train (max {kar_config.stage1_epochs} epochs) ===")
+    # ===== Stage 1: Backbone Pre-train =====
+    print(f"\n[kar-train] === Stage 1: Backbone Pre-train ({kar_config.stage1_epochs} epochs) ===")
     step_fn = make_kar_train_step_stage1(backbone_name)
-    best_s1_map = 0.0
-    s1_patience = 0
 
     for epoch in range(kar_config.stage1_epochs):
         kar_model.train()
@@ -1829,42 +1622,8 @@ def run_kar_training(
 
         print(f"  [S1 epoch {epoch+1}] avg_loss={np.mean(epoch_losses):.6f}")
 
-        # Stage 1 validation + early stopping (KAR per-user scoring)
-        gt_path = data_dir / f"{split}_ground_truth.json"
-        ground_truth_s1 = json.loads(gt_path.read_text())
-        rng_s1 = np.random.default_rng(train_config.random_seed + epoch)
-        valid_s1 = [u for u in ground_truth_s1 if u in user_to_idx]
-        sample_s1 = rng_s1.choice(valid_s1, size=min(train_config.val_sample_users, len(valid_s1)), replace=False).tolist()
-        s1_preds: dict[str, list[str]] = {}
-        for uid in sample_s1:
-            u_idx = user_to_idx[uid]
-            top_items = score_full_catalog_kar(
-                kar_model, u_idx, user_features, item_features,
-                item_emb, user_emb, k=12, backbone_name=backbone_name,
-                sequences=sequences, seq_lengths=seq_lengths,
-            )
-            s1_preds[uid] = [idx_to_item[i] for i in top_items]
-        s1_gt = {u: ground_truth_s1[u] for u in sample_s1}
-        s1_result = evaluate(s1_preds, s1_gt, EvalConfig(k=12))
-        s1_val = {"map_at_12": s1_result.map_at_k, "hr_at_12": s1_result.hr_at_k}
-        print(f"  S1 MAP@12={s1_val['map_at_12']:.6f} HR@12={s1_val['hr_at_12']:.6f}")
-        if s1_val["map_at_12"] > best_s1_map:
-            best_s1_map = s1_val["map_at_12"]
-            s1_patience = 0
-            _save_model_state(kar_model, model_dir / f"kar_{backbone_name}_s1_best")
-            print(f"  *** S1 best MAP@12: {best_s1_map:.6f} ***")
-        else:
-            s1_patience += 1
-            if s1_patience >= train_config.patience:
-                print(f"  S1 early stopping at epoch {epoch+1}")
-                break
-
-    # Load best S1 model before Stage 2
-    _load_model_state(kar_model, model_dir / f"kar_{backbone_name}_s1_best")
-    print(f"  Loaded best S1 model (MAP@12={best_s1_map:.6f})")
-
-    # ===== Stage 2: Expert Adaptor (backbone frozen, with early stopping) =====
-    print(f"\n[kar-train] === Stage 2: Expert Adaptor (max {kar_config.stage2_epochs} epochs) ===")
+    # ===== Stage 2: Expert Adaptor (backbone frozen) =====
+    print(f"\n[kar-train] === Stage 2: Expert Adaptor ({kar_config.stage2_epochs} epochs) ===")
     # Recreate optimizer for expert params only
     optimizer = nnx.Optimizer(
         kar_model, optax.adam(learning_rate=train_config.learning_rate), wrt=nnx.Param
@@ -1872,8 +1631,6 @@ def run_kar_training(
     step_fn = make_kar_train_step_stage2(
         backbone_name, kar_config.align_weight, kar_config.diversity_weight
     )
-    best_s2_map = 0.0
-    s2_patience = 0
 
     for epoch in range(kar_config.stage2_epochs):
         kar_model.train()
@@ -1897,40 +1654,6 @@ def run_kar_training(
                 print(f"  [S2 step {global_step:,}] loss={np.mean(epoch_losses[-500:]):.6f}")
 
         print(f"  [S2 epoch {epoch+1}] avg_loss={np.mean(epoch_losses):.6f}")
-
-        # Stage 2 validation + early stopping
-        gt_path_s2 = data_dir / f"{split}_ground_truth.json"
-        ground_truth_s2 = json.loads(gt_path_s2.read_text())
-        rng_s2 = np.random.default_rng(train_config.random_seed + epoch)
-        valid_s2 = [u for u in ground_truth_s2 if u in user_to_idx]
-        sample_s2 = rng_s2.choice(valid_s2, size=min(train_config.val_sample_users, len(valid_s2)), replace=False).tolist()
-        s2_preds: dict[str, list[str]] = {}
-        for uid in sample_s2:
-            u_idx = user_to_idx[uid]
-            top_items = score_full_catalog_kar(
-                kar_model, u_idx, user_features, item_features,
-                item_emb, user_emb, k=12, backbone_name=backbone_name,
-                sequences=sequences, seq_lengths=seq_lengths,
-            )
-            s2_preds[uid] = [idx_to_item[i] for i in top_items]
-        s2_gt = {u: ground_truth_s2[u] for u in sample_s2}
-        s2_result = evaluate(s2_preds, s2_gt, EvalConfig(k=12))
-        s2_val = {"map_at_12": s2_result.map_at_k, "hr_at_12": s2_result.hr_at_k}
-        print(f"  S2 MAP@12={s2_val['map_at_12']:.6f} HR@12={s2_val['hr_at_12']:.6f}")
-        if s2_val["map_at_12"] > best_s2_map:
-            best_s2_map = s2_val["map_at_12"]
-            s2_patience = 0
-            _save_model_state(kar_model, model_dir / f"kar_{backbone_name}_s2_best")
-            print(f"  *** S2 best MAP@12: {best_s2_map:.6f} ***")
-        else:
-            s2_patience += 1
-            if s2_patience >= train_config.patience:
-                print(f"  S2 early stopping at epoch {epoch+1}")
-                break
-
-    # Load best S2 model before Stage 3
-    _load_model_state(kar_model, model_dir / f"kar_{backbone_name}_s2_best")
-    print(f"  Loaded best S2 model (MAP@12={best_s2_map:.6f})")
 
     # ===== Stage 3: End-to-End =====
     stage3_lr = train_config.learning_rate * kar_config.stage3_lr_factor
@@ -1980,15 +1703,13 @@ def run_kar_training(
             valid_users, size=min(train_config.val_sample_users, len(valid_users)), replace=False
         ).tolist()
 
-        predictions: dict[str, list[str]] = {}
-        for uid in sample_users:
-            u_idx = user_to_idx[uid]
-            top_items = score_full_catalog_kar(
-                kar_model, u_idx, user_features, item_features,
-                item_emb, user_emb, k=12, backbone_name=backbone_name,
-                sequences=sequences, seq_lengths=seq_lengths,
-            )
-            predictions[uid] = [idx_to_item[i] for i in top_items]
+        predictions = generate_predictions_kar(
+            kar_model, sample_users, user_features, item_features,
+            item_emb, user_emb, user_to_idx, idx_to_item,
+            k=12, backbone_name=backbone_name,
+            sequences=sequences, seq_lengths=seq_lengths,
+            batch_size=min(train_config.pred_chunk_users, 16),
+        )
 
         sample_gt = {u: ground_truth[u] for u in sample_users}
         val_result = evaluate(predictions, sample_gt, EvalConfig(k=12))

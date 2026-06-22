@@ -1,0 +1,13 @@
+{
+  "probe": "probe_07_hybrid_discovery",
+  "eval": "immediate_week discovery_map (NEW-only, history excluded)",
+  "pool": 300,
+  "recent_days": 30,
+  "n_eval": 19447,
+  "popularity_discovery_map": 0.0019882177214820642,
+  "content_rerank_discovery_map": 0.0038388311344729736,
+  "hybrid_blend_discovery_map": 0.0029934236554832565,
+  "content_rerank_rel_vs_pop": 0.9307901207174729,
+  "hybrid_rel_vs_pop": 0.5055814175380593,
+  "verdict": "GO (content adds over popularity)"
+}

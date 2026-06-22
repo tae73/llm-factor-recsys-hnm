@@ -1,0 +1,262 @@
+{
+  "probe": "probe_22_isolation",
+  "question": "population bias vs coverage artifact behind the de-risk GO -> full NO-GO flip",
+  "model": "two_tower_dssm",
+  "objective": "softmax",
+  "tau": 0.05,
+  "logq_correction": true,
+  "softmax_batch": 512,
+  "coverage_held_at": "full",
+  "full_coverage_items": 105494,
+  "derisk_set_items": 3426,
+  "pool_size": 4999,
+  "pool_external_cov_frac_full": 1.0,
+  "pool_in_derisk_set_frac": 0.28465693138627723,
+  "epochs": 200,
+  "n_seeds": 3,
+  "populations": {
+    "derisk": {
+      "population": "derisk",
+      "n_eligible": 40000,
+      "n_train": 28000,
+      "n_eval": 12000,
+      "n_eval_active": 11888,
+      "n_eval_sparse": 112,
+      "configs": {
+        "popularity": {
+          "overall": {
+            "mean": 0.00250204264155157,
+            "std": 0.0,
+            "per_seed": [
+              0.00250204264155157,
+              0.00250204264155157,
+              0.00250204264155157
+            ]
+          },
+          "active": {
+            "mean": 0.0024858924525905635,
+            "std": 0.0,
+            "per_seed": [
+              0.0024858924525905635,
+              0.0024858924525905635,
+              0.0024858924525905635
+            ]
+          },
+          "sparse": {
+            "mean": 0.004216269841269841,
+            "std": 0.0,
+            "per_seed": [
+              0.004216269841269841,
+              0.004216269841269841,
+              0.004216269841269841
+            ]
+          }
+        },
+        "L1_only": {
+          "overall": {
+            "mean": 0.0035606668434557446,
+            "std": 0.0003384230170346186,
+            "per_seed": [
+              0.0034289438628667974,
+              0.004025002925131894,
+              0.003228053742368542
+            ]
+          },
+          "active": {
+            "mean": 0.0035665847713122396,
+            "std": 0.00033062037701209077,
+            "per_seed": [
+              0.003447833599841945,
+              0.004017608630373403,
+              0.0032343120837213706
+            ]
+          },
+          "sparse": {
+            "mean": 0.0029325210724020245,
+            "std": 0.0014066735486879128,
+            "per_seed": [
+              0.0014239332096474956,
+              0.0048098544973544976,
+              0.0025637755102040816
+            ]
+          }
+        },
+        "KAR_external": {
+          "overall": {
+            "mean": 0.004061818262613943,
+            "std": 0.00034480756402416134,
+            "per_seed": [
+              0.0036838045396329127,
+              0.004517597692486085,
+              0.00398405255572283
+            ]
+          },
+          "active": {
+            "mean": 0.004061011015254635,
+            "std": 0.00035481146215197166,
+            "per_seed": [
+              0.0036918731333216923,
+              0.004539926144583001,
+              0.003951233767859213
+            ]
+          },
+          "sparse": {
+            "mean": 0.0041475018037518034,
+            "std": 0.002363962910625646,
+            "per_seed": [
+              0.0028273809523809523,
+              0.002147591991341991,
+              0.007467532467532467
+            ]
+          }
+        }
+      },
+      "KAR_external_vs_L1_only": {
+        "delta": 0.0005011514191581982,
+        "rel": 0.14074650653690876,
+        "sign_seeds": 3,
+        "sign": "+"
+      },
+      "KAR_external_vs_popularity": {
+        "delta": 0.0015597756210623728,
+        "rel": 0.6234008945967134,
+        "sign": "+"
+      },
+      "go": true,
+      "verdict": "GO"
+    },
+    "full": {
+      "population": "full",
+      "n_eligible": 40000,
+      "n_train": 28000,
+      "n_eval": 12000,
+      "n_eval_active": 11463,
+      "n_eval_sparse": 537,
+      "configs": {
+        "popularity": {
+          "overall": {
+            "mean": 0.0021663133143778887,
+            "std": 0.0,
+            "per_seed": [
+              0.0021663133143778887,
+              0.0021663133143778887,
+              0.0021663133143778887
+            ]
+          },
+          "active": {
+            "mean": 0.0021325416692177354,
+            "std": 0.0,
+            "per_seed": [
+              0.0021325416692177354,
+              0.0021325416692177354,
+              0.0021325416692177354
+            ]
+          },
+          "sparse": {
+            "mean": 0.0028872153040814916,
+            "std": 0.0,
+            "per_seed": [
+              0.0028872153040814916,
+              0.0028872153040814916,
+              0.0028872153040814916
+            ]
+          }
+        },
+        "L1_only": {
+          "overall": {
+            "mean": 0.004799936073273389,
+            "std": 8.817847869624315e-05,
+            "per_seed": [
+              0.0049136666195339984,
+              0.004787367394743838,
+              0.004698774205542333
+            ]
+          },
+          "active": {
+            "mean": 0.004721581027671447,
+            "std": 6.256930010038637e-05,
+            "per_seed": [
+              0.004798904718900231,
+              0.004720177215467918,
+              0.0046456611486461906
+            ]
+          },
+          "sparse": {
+            "mean": 0.006472531767379688,
+            "std": 0.0006496687101828137,
+            "per_seed": [
+              0.007363416464906223,
+              0.006221633735600216,
+              0.005832545101632625
+            ]
+          }
+        },
+        "KAR_external": {
+          "overall": {
+            "mean": 0.004363194624942536,
+            "std": 0.0004614419696286251,
+            "per_seed": [
+              0.004135189508571769,
+              0.005006728378794126,
+              0.003947665987461713
+            ]
+          },
+          "active": {
+            "mean": 0.0043960086714330115,
+            "std": 0.0005436665723228128,
+            "per_seed": [
+              0.004174867775634339,
+              0.005144295781295853,
+              0.0038688624573688436
+            ]
+          },
+          "sparse": {
+            "mean": 0.0036627338895229293,
+            "std": 0.0014771640032220181,
+            "per_seed": [
+              0.003288202589878568,
+              0.0020701638818159166,
+              0.005629835196874304
+            ]
+          }
+        }
+      },
+      "KAR_external_vs_L1_only": {
+        "delta": -0.0004367414483308534,
+        "rel": -0.09098901353346794,
+        "sign_seeds": 1,
+        "sign": "-"
+      },
+      "KAR_external_vs_popularity": {
+        "delta": 0.0021968813105646473,
+        "rel": 1.014110607170199,
+        "sign": "+"
+      },
+      "go": false,
+      "verdict": "NO-GO"
+    }
+  },
+  "summary": {
+    "derisk": {
+      "KAR_external": 0.004061818262613943,
+      "L1_only": 0.0035606668434557446,
+      "delta": 0.0005011514191581982,
+      "rel": 0.14074650653690876,
+      "sign": "+",
+      "sign_seeds": 3,
+      "verdict": "GO",
+      "n_eligible": 40000
+    },
+    "full": {
+      "KAR_external": 0.004363194624942536,
+      "L1_only": 0.004799936073273389,
+      "delta": -0.0004367414483308534,
+      "rel": -0.09098901353346794,
+      "sign": "-",
+      "sign_seeds": 1,
+      "verdict": "NO-GO",
+      "n_eligible": 40000
+    }
+  },
+  "conclusion": "POPULATION BIAS — at FULL external coverage the DE-RISK population is GO while the FULL population is NO-GO. The de-risk eligible subset (heavy buyers of the ~3426 popular items) is special: external-knowledge KAR beats L1 on THAT population but not on the representative population. The verdict flip is driven by POPULATION, not coverage."
+}

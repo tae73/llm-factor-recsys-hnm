@@ -38,6 +38,10 @@ class SplitConfig(NamedTuple):
     val_end: str = "2020-08-31"
     test_start: str = "2020-09-01"
     test_end: str = "2020-09-07"
+    # Immediate-next-period eval window (Kaggle-comparable): the `eval_horizon_days`
+    # immediately after `train_end`, i.e. (train_end, train_end + horizon]. Keeps
+    # recency intact (no 2-month gap). See redesign_2026-06.md §8-9.
+    eval_horizon_days: int = 7
 
 
 class FilterConfig(NamedTuple):
@@ -173,6 +177,87 @@ class ExtractionResult(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
+# External Knowledge Extraction Configuration
+# ---------------------------------------------------------------------------
+
+
+class ExternalExtractionConfig(NamedTuple):
+    """External (open-world styling) knowledge extraction settings.
+
+    Realizes KAR's open-world premise: per PRODUCT_CODE, a single structured
+    call extracts BOTH a prose complement description AND structured complement
+    attributes (product_type / colour / material / style). The structured part
+    is rendered into L1's attribute-list genre (format-unified). Combining both
+    into one json_schema call halves API volume vs. two separate calls.
+    """
+
+    model: str = "gpt-4.1-nano"
+    concurrency: int = 32  # async gather Semaphore size
+    max_retries: int = 4  # retry/backoff attempts per item (probe_16 parity)
+    max_cost_usd: float = 12.0  # hard cost guard before submission
+    timeout_seconds: float = 60.0
+    checkpoint_interval: int = 1_000  # parquet checkpoint cadence (product_codes)
+    max_complements: int = 3  # structured complements per item (schema maxItems)
+    detail_desc_chars: int = 200  # truncation of representative detail_desc
+
+
+class ExternalExtractionResult(NamedTuple):
+    """External knowledge extraction run summary."""
+
+    output_path: Path
+    n_product_codes: int  # unique product_codes extracted
+    n_articles: int  # total articles after propagation
+    n_api_calls: int  # actual API calls made this run
+    n_cache_hits: int  # product_codes loaded from checkpoint
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost_usd: float
+    coverage_prose: float  # non-empty prose_text ratio
+    coverage_structured: float  # non-empty structured_text ratio
+
+
+# ---------------------------------------------------------------------------
+# Enrichment v2 (catalog decision-axes) Configuration
+# ---------------------------------------------------------------------------
+
+
+class EnrichmentV2Config(NamedTuple):
+    """Enrichment-v2 multimodal extraction settings (anti-recoding, no metadata).
+
+    Per PRODUCT_CODE, a single GPT-4.1-nano structured-output call extracts the
+    LLM decision-axes (occasion / fit-intent / care / perceived price+trend) from
+    the IMAGE + bare product name + a metadata-stripped detail_desc. The behavior-
+    derived axes (price-tier, trend-phase, outfit-role) are computed separately in
+    ``src/features/behavioral_axes.py`` (no API). See ``enrichment_v2/schema.py``.
+    """
+
+    model: str = "gpt-4.1-nano"
+    concurrency: int = 16  # async Semaphore size (multimodal calls are heavier)
+    max_retries: int = 4  # retry/backoff attempts per item
+    max_cost_usd: float = 0.5  # hard cost guard before submission (pilot budget)
+    timeout_seconds: float = 60.0
+    checkpoint_interval: int = 100  # parquet checkpoint cadence (product_codes)
+    image_max_size: int = 512  # image resize (px) for base64 encoding
+    detail_desc_chars: int = 180  # truncation of the stripped detail_desc
+    pilot_size: int = 500  # default pilot product_code count
+
+
+class EnrichmentV2Result(NamedTuple):
+    """Enrichment-v2 LLM extraction run summary."""
+
+    output_path: Path
+    n_product_codes: int  # unique product_codes extracted (LLM)
+    n_articles: int  # total articles after propagation
+    n_api_calls: int
+    n_cache_hits: int
+    n_with_image: int  # API calls that included an image (vs text-only fallback)
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost_usd: float
+    coverage: float  # fraction of articles with a valid (non-null) LLM row
+
+
+# ---------------------------------------------------------------------------
 # User Reasoning Knowledge Configuration
 # ---------------------------------------------------------------------------
 
@@ -219,6 +304,8 @@ class FeatureConfig(NamedTuple):
     """Feature engineering settings."""
 
     neg_sample_ratio: int = 4
+    neg_strategy: str = "uniform"  # "uniform" | "popularity" | "mixed"
+    neg_mixed_pop_frac: float = 0.5  # fraction of pop-proportional negs when "mixed"
     reference_date: str = "2020-06-30"
     age_bins: tuple[int, ...] = (0, 18, 25, 35, 45, 55, 65, 100)
     age_labels: tuple[str, ...] = (
@@ -261,6 +348,11 @@ class DeepFMConfig(NamedTuple):
     dnn_hidden_dims: tuple[int, ...] = (256, 128, 64)
     dropout_rate: float = 0.1
     use_batch_norm: bool = True
+    embed_init_std: float = 0.05  # small embedding init (un-saturate FM at init)
+    fm_norm: bool = True  # scale FM 2nd-order by 1/sqrt(n_fields*d_embed)
+    use_id_embed: bool = False  # add per-item / per-user id embeddings (CF capacity)
+    n_users: int = 0  # filled at construction when use_id_embed
+    n_items: int = 0  # filled at construction when use_id_embed
 
 
 class DCNv2Config(NamedTuple):
@@ -273,6 +365,10 @@ class DCNv2Config(NamedTuple):
     dnn_hidden_dims: tuple[int, ...] = (256, 128, 64)
     dropout_rate: float = 0.1
     use_batch_norm: bool = True
+    embed_init_std: float = 0.05  # small embedding init (un-saturate at init)
+    use_id_embed: bool = False  # add per-item / per-user id embeddings (CF capacity)
+    n_users: int = 0
+    n_items: int = 0
 
 
 class LightGCNConfig(NamedTuple):
@@ -324,13 +420,16 @@ class TrainConfig(NamedTuple):
     max_epochs: int = 50
     patience: int = 3
     val_every_n_steps: int = 5000
-    val_sample_users: int = 5000
+    val_sample_users: int = 50000  # epoch-end validation (batched scoring, Track B)
+    midval_sample_users: int = 5000  # mid-epoch validation (cheap signal)
+    pred_chunk_users: int = 32  # users per batched full-catalog scoring chunk
     random_seed: int = 42
     log_every_n_steps: int = 500
     use_wandb: bool = True
     wandb_project: str = "llm-factor-recsys-hnm"
     num_workers: int = 4  # Grain multiprocess workers (0 = same process)
     prefetch_buffer_size: int = 2  # Batches to prefetch per worker
+    bce_pos_weight: float = 1.0  # >1 up-weights positives in feature-based BCE
 
 
 class TrainResult(NamedTuple):
@@ -437,42 +536,7 @@ class KARConfig(NamedTuple):
     layer_combo: str = "L1+L2+L3"
     align_weight: float = 0.1
     diversity_weight: float = 0.01
-    stage1_epochs: int = 20  # Backbone pre-train (BCE only, with early stopping)
-    stage2_epochs: int = 10  # Expert adaptor (align+div, backbone frozen, with early stopping)
-    stage3_epochs: int = 10  # End-to-end (BCE+align+div, with early stopping)
+    stage1_epochs: int = 2  # Backbone pre-train (BCE only)
+    stage2_epochs: int = 5  # Expert adaptor (align+div, backbone frozen)
+    stage3_epochs: int = 3  # End-to-end (BCE+align+div)
     stage3_lr_factor: float = 0.1  # LR multiplier for stage 3
-
-
-# ---------------------------------------------------------------------------
-# Re-Ranker Configuration (GBDT 2nd-stage)
-# ---------------------------------------------------------------------------
-
-
-class ReRankerConfig(NamedTuple):
-    """LightGBM GBDT Re-Ranker hyperparameters."""
-
-    top_k: int = 100  # Stage 1 candidate pool size
-    n_estimators: int = 500
-    max_depth: int = 6
-    learning_rate: float = 0.05
-    num_leaves: int = 31
-    min_child_samples: int = 20
-    subsample: float = 0.8
-    colsample_bytree: float = 0.8
-    random_seed: int = 42
-
-
-class ReRankerResult(NamedTuple):
-    """Re-ranker training + evaluation summary."""
-
-    output_dir: Path
-    n_train_samples: int
-    n_val_samples: int
-    n_features: int
-    best_iteration: int
-    val_auc: float
-    map_at_12: float
-    hr_at_12: float
-    ndcg_at_12: float
-    mrr: float
-    top_features: list[tuple[str, float]]  # (name, importance) top-20

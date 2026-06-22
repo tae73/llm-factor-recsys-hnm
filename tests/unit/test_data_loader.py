@@ -193,7 +193,14 @@ class TestBatchFnBuilders:
         i = np.array([3, 4, 5], dtype=np.int32)
         l = np.array([1.0, 0.0, 1.0], dtype=np.float32)
         result = fn(u, i, l)
-        assert set(result.keys()) == {"user_cat", "user_num", "item_cat", "item_num", "labels"}
+        # user_idx/item_idx always present (consumed only when use_id_embed=True).
+        assert set(result.keys()) == {
+            "user_cat", "user_num", "item_cat", "item_num", "user_idx", "item_idx", "labels"
+        }
+        np.testing.assert_array_equal(result["user_idx"], u)
+        np.testing.assert_array_equal(result["item_idx"], i)
+        assert result["user_idx"].dtype == np.int32
+        assert result["item_idx"].dtype == np.int32
 
     def test_feature_batch_fn_shapes(self, user_features, item_features):
         fn = _make_feature_batch_fn(

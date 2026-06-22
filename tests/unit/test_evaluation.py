@@ -9,6 +9,7 @@ from src.evaluation.metrics import (
     compute_mrr,
     compute_ndcg_at_k,
     evaluate,
+    evaluate_by_cohort,
 )
 
 
@@ -110,3 +111,53 @@ class TestEvaluate:
         assert hasattr(result, "mrr")
         assert result.map_at_k > 0
         assert result.hr_at_k > 0
+
+
+class TestEvaluateByCohort:
+    """FIX C: cohort split must isolate feature_capable vs cold_start fairly."""
+
+    def test_cohorts_use_disjoint_user_sets(self):
+        gt = {"u1": ["a"], "u2": ["b"], "u3": ["c"]}
+        preds = {"u1": ["a"], "u2": ["x"], "u3": ["c"]}
+        cohorts = {"feature_capable": {"u1", "u3"}, "cold_start": {"u2"}}
+
+        results = evaluate_by_cohort(preds, gt, cohorts, EvalConfig(k=12))
+
+        assert set(results) == {"feature_capable", "cold_start"}
+        # feature_capable: u1 + u3 both perfect hit → HR 1.0
+        assert results["feature_capable"].hr_at_k == pytest.approx(1.0)
+        # cold_start: u2 miss → HR 0.0
+        assert results["cold_start"].hr_at_k == pytest.approx(0.0)
+
+    def test_cohort_ignores_users_outside_set(self):
+        """A cohort must only score its own members (headline parity guarantee)."""
+        gt = {"u1": ["a"], "u2": ["b"]}
+        preds = {"u1": ["a"], "u2": ["b"]}
+        cohorts = {"feature_capable": {"u1"}}  # u2 excluded
+        results = evaluate_by_cohort(preds, gt, cohorts, EvalConfig(k=12))
+        # Only u1 evaluated → perfect, regardless of u2.
+        assert results["feature_capable"].hr_at_k == pytest.approx(1.0)
+
+
+class TestSplitEvalCohorts:
+    """split_eval_cohorts partitions eval users by feature availability."""
+
+    def test_partitions_by_user_to_idx_membership(self):
+        from src.training.trainer import split_eval_cohorts
+
+        gt_users = ["u1", "u2", "u3", "u4"]
+        user_to_idx = {"u1": 0, "u3": 1}  # only u1, u3 have features
+        cohorts = split_eval_cohorts(gt_users, user_to_idx)
+
+        assert cohorts["feature_capable"] == {"u1", "u3"}
+        assert cohorts["cold_start"] == {"u2", "u4"}
+
+    def test_disjoint_and_complete(self):
+        from src.training.trainer import split_eval_cohorts
+
+        gt_users = ["a", "b", "c"]
+        user_to_idx = {"a": 0}
+        cohorts = split_eval_cohorts(gt_users, user_to_idx)
+        # No overlap, union == all gt users.
+        assert cohorts["feature_capable"].isdisjoint(cohorts["cold_start"])
+        assert cohorts["feature_capable"] | cohorts["cold_start"] == set(gt_users)

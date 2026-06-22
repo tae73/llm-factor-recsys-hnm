@@ -1,0 +1,21 @@
+{
+  "probe": "probe_18_learned_fusion",
+  "n_eligible": 12000,
+  "n_train": 8400,
+  "n_eval": 3600,
+  "epochs": 200,
+  "A_L1_only": {
+    "discovery_map": 0.0040484945909714425,
+    "discovery_hr": 0.042777777777777776
+  },
+  "B_ext_user": {
+    "discovery_map": 0.0041569519998422115,
+    "discovery_hr": 0.04638888888888889
+  },
+  "C_ext_both": {
+    "discovery_map": 0.0045565895952470025,
+    "discovery_hr": 0.04638888888888889
+  },
+  "best_ext_vs_A_rel": 0.12550220652601674,
+  "verdict": "REVIVE — learned fusion of external knowledge BEATS L1-only: earlier NO-GO was a frozen-fusion artifact; option-1 viable with KAR-style learned projection+gating"
+}

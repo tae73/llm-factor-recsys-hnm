@@ -69,63 +69,7 @@ python scripts/train.py \
     --gating g2 --fusion f2 \
     --no-wandb
 
-# 3f. GBDT Re-Ranker (2-stage baseline)
-# Base mode — single source (DCNv2 Stage 1 only)
-python scripts/train_reranker.py \
-    --stage1-model-dir results/models \
-    --stage1-backbone dcnv2 \
-    --data-dir data/processed \
-    --features-dir data/features \
-    --output-dir results/reranker \
-    --mode base --no-wandb
-
-# Base mode — multi-source (repurchase + age popularity + recency + Stage 1)
-python scripts/train_reranker.py \
-    --stage1-model-dir results/models \
-    --stage1-backbone dcnv2 \
-    --data-dir data/processed \
-    --features-dir data/features \
-    --output-dir results/reranker \
-    --mode base \
-    --candidate-sources "stage1,repurchase,age_pop,recency" \
-    --no-wandb
-
-# Full mode (Base + L1/L2/L3 attributes + BGE similarity)
-python scripts/train_reranker.py \
-    --stage1-model-dir results/models \
-    --stage1-backbone dcnv2 \
-    --data-dir data/processed \
-    --features-dir data/features \
-    --fk-dir data/knowledge/factual \
-    --embeddings-dir data/embeddings \
-    --output-dir results/reranker \
-    --mode full \
-    --candidate-sources "stage1,repurchase,age_pop,recency" \
-    --no-wandb
-
-# KAR mode — KAR Stage 1 + dense Expert/Gating features (replaces lossy LabelEncoder)
-python scripts/train_reranker.py \
-    --stage1-model-dir results/models \
-    --stage1-backbone kar_deepfm \
-    --data-dir data/processed \
-    --features-dir data/features \
-    --embeddings-dir data/embeddings \
-    --output-dir results/reranker \
-    --mode kar --no-wandb
-
-# KAR mode — multi-source candidates
-python scripts/train_reranker.py \
-    --stage1-model-dir results/models \
-    --stage1-backbone kar_deepfm \
-    --data-dir data/processed \
-    --features-dir data/features \
-    --embeddings-dir data/embeddings \
-    --output-dir results/reranker \
-    --mode kar \
-    --candidate-sources "stage1,repurchase,age_pop,recency" \
-    --no-wandb
-
-# 3g. Pre-store expert outputs for serving
+# 3f. Pre-store expert outputs for serving
 python scripts/prestore.py \
     --model-dir results/models \
     --features-dir data/features \
@@ -187,7 +131,11 @@ Converts raw H&M CSV files to Parquet and creates temporal train/val/test splits
 | `--val-end` | str | "2020-08-31" | Validation end date |
 | `--test-start` | str | "2020-09-01" | Test start date |
 | `--test-end` | str | "2020-09-07" | Test end date |
+| `--eval-horizon-days` | int | 7 | Immediate-next-period eval window length (days after `train_end`) |
+| `--build-immediate` / `--no-build-immediate` | bool | True | Build `immediate_ground_truth.json` for `(train_end, train_end+horizon]` |
 | `--verbose` | bool | False | Print detailed statistics |
+
+> **Immediate-next-period eval (Kaggle-comparable).** The 2-month `val`/`test` splits leave a ~2-month gap between `train_end` and the eval window, which destroys recency — the dominant H&M signal — and made absolute MAP@12 look ~10x below Kaggle (see `redesign_2026-06.md` §8-9). `--build-immediate` (default on) additionally writes `immediate_ground_truth.json` for the window **`(train_end, train_end + eval_horizon_days]`** (the week right after training, by default Jul 1-7). On this split a trivial repurchase baseline scores MAP@12 ≈ 0.024 (Kaggle-competitive). The existing 2-month splits are untouched (backward compatible).
 
 ### Output Files
 
@@ -197,10 +145,11 @@ data/processed/
 ├── customers.parquet             # Cleaned customers (nulls filled)
 ├── transactions.parquet          # Cleaned transactions (sorted by t_dat)
 ├── train_transactions.parquet    # Train split
-├── val_transactions.parquet      # Validation split
-├── test_transactions.parquet     # Test split
-├── val_ground_truth.json         # {customer_id: [article_ids]}
-├── test_ground_truth.json        # {customer_id: [article_ids]}
+├── val_transactions.parquet      # Validation split (2-month)
+├── test_transactions.parquet     # Test split (2-month, +2-month gap)
+├── val_ground_truth.json         # {customer_id: [article_ids]} (2-month)
+├── test_ground_truth.json        # {customer_id: [article_ids]} (2-month)
+├── immediate_ground_truth.json   # {customer_id: [article_ids]} for (train_end, +horizon] — Kaggle-comparable
 ├── active_customer_ids.json      # Active users (5+ purchases)
 └── sparse_customer_ids.json      # Sparse users (1-4 purchases)
 ```
@@ -212,10 +161,25 @@ scripts/preprocess.py
   → src.data.preprocessing.run_preprocessing(DataPaths)
     → validate_raw_data() — DuckDB validation
     → load_and_convert_{articles,customers,transactions}() — ThreadPool parallel
-  → src.data.splitter.run_split(processed_dir, output_dir, SplitConfig, FilterConfig)
+  → src.data.splitter.run_split(processed_dir, output_dir, SplitConfig, FilterConfig, build_immediate=True)
     → split_transactions_temporal() — DuckDB WHERE on t_dat
     → filter_customers_by_activity() — GROUP BY + COUNT
-    → build_ground_truth() — Deduplicated purchase lists
+    → build_ground_truth() — Deduplicated purchase lists (val + test)
+    → build_immediate_eval() — GT for (train_end, train_end+eval_horizon_days] window
+```
+
+`build_immediate_eval(processed_dir, output_dir, train_end, horizon_days=7)` can also be called directly (independent of full preprocessing) to (re)build `immediate_ground_truth.json` from an existing `val_transactions.parquet`:
+
+```python
+from pathlib import Path
+from src.data.splitter import build_immediate_eval
+
+build_immediate_eval(
+    processed_dir=Path("data/processed"),
+    output_dir=Path("data/processed"),
+    train_end="2020-06-30",
+    horizon_days=7,
+)
 ```
 
 ---
@@ -393,6 +357,373 @@ API 서버 부하를 줄이려면 `--max-concurrent`를 낮추면 된다.
 
 ---
 
+## External Knowledge Extraction (`scripts/extract_external_knowledge.py`)
+
+KAR의 open-world(외부 스타일링) 지식 가설을 실현하는 모듈. probe_16(prose) +
+probe_19(structured format-unify)에서 검증된 프롬프트를 **단일 호출로 결합**한다.
+**PRODUCT_CODE 단위**(article 단위 아님)로 GPT-4.1-nano structured-output을 1회 호출해
+(1) `prose` 보완 설명과 (2) `complements` 구조화 속성(product_type / colour / material /
+style)을 **동시에** 추출한다. 구조화 결과는 L1 속성 리스트 형식으로 렌더링되어
+(`render_external_text`) BGE가 L1과 같은 sub-space에 임베딩하도록 한다(format-unify).
+결합 호출로 API 호출량을 절반으로 줄인다(prose/structured 따로 호출 대비).
+
+`product_code` 결과는 해당 product_code의 모든 article SKU로 propagate되어
+`external_knowledge_full.parquet`(columns: `article_id, product_code, prose_text,
+structured_text`)로 저장된다. 체크포인트(`external_checkpoint.parquet`)는 product_code
+단위 resume-safe이다 — 재실행 시 이미 추출된 product_code는 건너뛴다.
+
+**중요**: 이 스크립트 실행은 비용을 발생시킨다(OpenAI API 호출). import 시점에는 API 호출이
+없다. `--dry-run`은 articles 그룹핑 + 비용 추정만 수행하고 API를 호출하지 않는다.
+제출 전 `--max-cost` 가드가 추정 비용을 초과하면 중단한다.
+
+### CLI Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--data-dir` | Path | `data/processed` | `articles.parquet` 위치 |
+| `--output-dir` | Path | `data/knowledge/external` | 출력 디렉토리 |
+| `--model` | str | `gpt-4.1-nano` | OpenAI 모델명 |
+| `--concurrency` | int | 32 | async 동시 요청 수 (Semaphore) |
+| `--max-retries` | int | 4 | 아이템당 retry/backoff 횟수 |
+| `--max-cost` | float | 12.0 | 비용 가드 (USD). 추정 초과 시 중단 |
+| `--pilot` | int | None | 처음 N개 product_code만 추출 (smoke test) |
+| `--limit` | int | None | 이번 실행에서 처리할 product_code 상한 |
+| `--dry-run` | flag | False | 그룹핑 + 비용 추정만, **API 호출 없음** |
+| `--verbose` | flag | False | DEBUG 로깅 |
+
+### Example Commands
+
+```bash
+# Dry-run — 그룹핑 + 비용 추정만 (API 호출 없음, 비용 0)
+python scripts/extract_external_knowledge.py \
+    --data-dir data/processed \
+    --output-dir data/knowledge/external \
+    --dry-run
+
+# Pilot — 3개 product_code만 추출 (smoke test, 극소 비용)
+python scripts/extract_external_knowledge.py \
+    --data-dir data/processed \
+    --output-dir data/knowledge/external \
+    --pilot 3
+
+# FULL — 전체 ~47K product_code 추출 (비용 가드 $12)
+python scripts/extract_external_knowledge.py \
+    --data-dir data/processed \
+    --output-dir data/knowledge/external \
+    --max-cost 12.0
+```
+
+### Output Files
+
+| File | Description |
+|------|-------------|
+| `external_knowledge_full.parquet` | article 단위 결과 (article_id, product_code, prose_text, structured_text) |
+| `external_checkpoint.parquet` | product_code 단위 resume-safe 체크포인트 |
+| `quality_report.json` | product_code 수, article 수, API 호출 수, 토큰, 비용, prose/structured 커버리지 |
+
+### 비용 추정
+
+GPT-4.1-nano 실시간 가격($0.10/1M input, $0.40/1M output) 기준, 결합 호출당
+약 240 input + 220 output 토큰 추정. **~47,224 product_code 전체 ≈ $5.29**
+(`estimate_external_cost(47224)`), 기본 가드 $12 이내.
+
+### Internal Calls
+
+```
+scripts/extract_external_knowledge.py
+  └─ src.knowledge.external.extractor.extract_external_knowledge()  [async]
+       ├─ group_representatives()         # product_code별 첫 article을 대표로
+       ├─ load_checkpoint()               # resume (이미 추출된 product_code skip)
+       ├─ estimate_external_cost()        # 비용 가드 (제출 전)
+       ├─ _extract_one() × N              # 결합 호출 (responses.create + json_schema)
+       │    └─ prompts.build_messages() / RESPONSE_FORMAT / render_external_text()
+       ├─ save_checkpoint()               # 체크포인트 (checkpoint_interval마다)
+       └─ propagate_to_articles()         # product_code → 모든 article SKU 전파
+```
+
+`src/config.py`의 `ExternalExtractionConfig`(model, concurrency, max_retries,
+max_cost_usd, ...)와 `ExternalExtractionResult`(요약 NamedTuple)를 사용한다.
+
+---
+
+## Enrichment v2 — Behavioral Axes (`scripts/build_behavioral_axes.py`)
+
+Catalog enrichment v2의 **행동파생 3축**(LLM/이미지 불필요, API 비용 0)을 전체 카탈로그에서
+DuckDB로 계산한다. `behavioral_axes.parquet`(key=`article_id`)에 저장:
+`e2_price_tier_actual`(product_group내 가격 quintile T1–T5), `e2_trend_phase_actual`(월별
+매출 momentum→Emerging/Rising/Peak/Mature/Declining/Insufficient), `e2_outfit_role`(same-basket
+cross-group co-purchase 그래프의 degree·방향·다양성을 product_group에 residualize→Anchor-hub/
+Versatile-connector/Complement-addon/Niche-pair/Standalone). DE1 lesson: 이 축들은 LLM이
+*관측할 수 없는* 행동 신호라 metadata 재코딩이 아니다.
+
+### CLI Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--data-dir` | Path | `data/processed` | `train_transactions.parquet` + `articles.parquet` |
+| `--output-dir` | Path | `data/knowledge/enrichment_v2` | `behavioral_axes.parquet` 출력 |
+| `--verbose` | flag | False | DEBUG 로깅 |
+
+```bash
+python scripts/build_behavioral_axes.py \
+    --data-dir data/processed \
+    --output-dir data/knowledge/enrichment_v2
+```
+
+`src/features/behavioral_axes.py`의 `compute_price_tier` / `compute_trend_phase` /
+`compute_outfit_role` / `build_behavioral_axes`를 호출한다. 전체 105K 카탈로그 ~45초.
+
+---
+
+## Enrichment v2 — Multimodal LLM Axes (`scripts/extract_enrichment_v2.py`)
+
+Catalog enrichment v2의 **LLM 인식축**을 추출하는 **anti-recoding 멀티모달** 파이프라인.
+v1 factual 프롬프트가 metadata를 LLM에 주입해 재코딩을 유발한 것(DE1)을 교정 — 이 모듈은
+**이미지 + 상품명 + (material/care/fabric-word strip된) detail_desc만** 보여주고 categorical
+metadata는 절대 노출하지 않는다(`build_e2_messages`). PRODUCT_CODE 단위 GPT-4.1-nano
+structured-output 1회 호출로 occasion(primary/secondary/formality)·fit_intent·body_ease·
+care_burden·care_flags·price_look·trend_look을 추출, 모든 SKU로 propagate.
+
+두 개의 sub-command: `build-sample`(층화 pilot 표본 freeze, API 0) + `extract`(추출/`--dry-run`).
+
+### `build-sample` Arguments (no API)
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--data-dir` | Path | `data/processed` | 처리된 parquet 위치 |
+| `--output-dir` | Path | `data/knowledge/enrichment_v2` | `pilot_sample.csv` + manifest |
+| `--n-codes` | int | 500 | 목표 product_code 수 |
+| `--floor` | int | 10 | product_code당 최소 train 구매(행동 power floor) |
+| `--per-group-floor` | int | 3 | garment_group당 최소 code 수(breadth) |
+| `--seed` | int | 42 | tie-break seed |
+
+### `extract` Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--data-dir` | Path | `data/processed` | `articles.parquet` 위치 |
+| `--sample-file` | Path | `…/pilot_sample.csv` | freeze된 pilot 표본 |
+| `--images-dir` | Path | `data/h-and-m-…/images` | H&M 이미지 디렉토리 |
+| `--output-dir` | Path | `data/knowledge/enrichment_v2` | `enrichment_v2_llm.parquet` |
+| `--model` | str | `gpt-4.1-nano` | OpenAI 모델명 |
+| `--concurrency` | int | 16 | async 동시 요청 |
+| `--max-cost` | float | 0.5 | 비용 가드(USD), 추정 초과 시 중단 |
+| `--dry-run` | flag | False | 그룹핑 + 비용추정 + **이미지 hit-rate + metadata-leak 검사**, API 0 |
+
+```bash
+# 1) 층화 pilot 표본 freeze (API 0)
+python scripts/extract_enrichment_v2.py build-sample \
+    --data-dir data/processed --output-dir data/knowledge/enrichment_v2
+
+# 2) dry-run — 이미지 hit-rate + leak 검사 (API 0)
+python scripts/extract_enrichment_v2.py extract \
+    --sample-file data/knowledge/enrichment_v2/pilot_sample.csv --dry-run
+
+# 3) live 멀티모달 추출 (~$0.1, 가드 $0.5)
+python scripts/extract_enrichment_v2.py extract \
+    --sample-file data/knowledge/enrichment_v2/pilot_sample.csv \
+    --images-dir data/h-and-m-personalized-fashion-recommendations/images \
+    --max-cost 0.5
+```
+
+### Output Files
+
+| File | Description |
+|------|-------------|
+| `pilot_sample.csv` + `pilot_sample_manifest.json` | freeze된 층화 표본(seed 42, resume-safe) |
+| `enrichment_v2_llm.parquet` | article 단위 LLM 축 (article_id, product_code, e2_*) |
+| `checkpoint_llm/checkpoint.parquet` | product_code 단위 resume 체크포인트 |
+| `quality_report.json` | code/article/call 수, 이미지 사용 수, 토큰, 비용, coverage |
+
+`src/knowledge/enrichment_v2/`(schema·prompts·validator·extractor·sampling) + `src/config.py`의
+`EnrichmentV2Config`/`EnrichmentV2Result`를 사용한다. factual의 `cache.py`(ProductCodeCache)·
+`image_utils.py`를 재사용한다.
+
+### DE1 v2 re-screen (`witnesses/probe_DE1_v2_new_attributes.py`)
+
+추출 후 **DE1 엔진·임계값을 그대로 재사용**해 새 축의 변별력·비중복·행동신호를 재검정(seed 42,
+two-population: 행동축=full 105K STRONG / LLM·gap축=pilot PRELIMINARY). `behavioral_axes.parquet`
++ `enrichment_v2_llm.parquet`를 article_id로 left-join하고 gap축(value_gap/trend_gap)을 계산해
+`probe_DE1_v2_result.json`(per-attribute verdict + GO/NO-GO)을 출력한다. LLM parquet 부재 시
+행동축만 채점한다(spend-free 조기 read).
+
+```bash
+PYTHONPATH=. python -u witnesses/probe_DE1_v2_new_attributes.py
+```
+
+> **실행 주의(이 환경):** conda 미설치·system Python. `scripts/`·`witnesses/`는 repo root에서
+> `PYTHONPATH=. python …`로 실행한다(미설정 시 `ModuleNotFoundError: src`).
+
+---
+
+## Enrichment v2 — Value Matrix (`scripts/build_enrichment_matrix.py` + `witnesses/probe_E2_value_matrix.py`)
+
+E2-2: DE1-v2를 통과한 **4 결정-축**(trend_phase·outfit_role·value_gap·trend_gap)의 가치를
+**4-use value matrix**(①faceted/control·②trend lead-time·③merchandising·④marketing)로 특성화한다.
+각 cell = (a) **capability**(metadata 없는 결정 차원인가) + (b) **measured decision-lift**(행동지표로
+metadata baseline을 이기나, 유의성 포함)를 **분리** 보고. API $0, seed 42 재현.
+
+### 1) Matrix-ready 테이블 (`scripts/build_enrichment_matrix.py`, no API)
+
+gap축(value_gap/trend_gap)을 영속화(DE1-v2 probe에서 transient 계산하던 것 승격)하고 per-item
+sell-through(velocity = total_purchases/lifespan_days, buyer_concentration) + **E2-3 merch 신호**
+(`compute_merch_signals`: markdown_depth·first_week_sell_through·online_ratio)를 더해
+`matrix_axes.parquet`(key=article_id)로 저장. `src/features/enrichment_matrix.py`의
+`compute_value_gap`/`compute_trend_gap`/`compute_sell_through`/`compute_merch_signals`/`build_matrix_table` 호출.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--data-dir` | Path | `data/processed` | `train_transactions.parquet` |
+| `--e2-dir` | Path | `data/knowledge/enrichment_v2` | `behavioral_axes.parquet` + `enrichment_v2_llm.parquet` → `matrix_axes.parquet` |
+
+```bash
+python scripts/build_enrichment_matrix.py --data-dir data/processed --e2-dir data/knowledge/enrichment_v2
+```
+
+### 2) Value-matrix probe (`witnesses/probe_E2_value_matrix.py`, no API)
+
+D3(steering)·D5(`_effective_k`/`_repurchase_rate`)·DE1(`_eta`) 엔진과 신규 `src/features/lead_lag.py`
+(월별 attribute-share→sales(t+k) lead-lag + permutation-null + block-bootstrap)를 재사용해 16 cell을
+채점하고 `witnesses/probe_E2_result.json` + `results/figures/E2_value_matrix.png`(heatmap)를 출력한다.
+`--quick`(lags 1-2, n_boot 200, 2k users)로 빠른 검증. 결과: **E2 GO**(capability 14/16, strong lift
+PASS 2/16 = trend_phase→②lead-time·outfit_role→③merch).
+
+```bash
+PYTHONPATH=. python -u witnesses/probe_E2_value_matrix.py          # full (8k users, lags 1-4)
+PYTHONPATH=. python -u witnesses/probe_E2_value_matrix.py --quick  # fast wiring check
+```
+
+### 3) Value-matrix 강화 probe (`witnesses/probe_E2b_value_matrix.py`, E2-3, no API)
+
+E2-2 matrix(lift 2/16)를 *정직하게* 강화 — 임계값 불변, 더 나은 target/granularity/outcome로만.
+컬럼당 PRIMARY 1개(나머지 descriptive): ① deployable history-predictor(oracle 대신) · ② weekly+
+continuous momentum(secondary; monthly가 primary) · ③ rich outcome(first_week_sell_through·markdown,
+product_group residualize) · ④ **buyer-population** divergence(`src/features/audience_signals.py`,
+txn⋈customers age/channel). `probe_E2_result.json`은 **건드리지 않고** `probe_E2b_result.json` +
+`results/figures/E2b_value_matrix.png`(★=new PASS) 출력 → before/after. 결과: **lift 2→3**(③
+`trend_phase`→merch NEW PASS; ①②④는 정직 반증).
+
+```bash
+PYTHONPATH=. python -u witnesses/probe_E2b_value_matrix.py          # full
+PYTHONPATH=. python -u witnesses/probe_E2b_value_matrix.py --quick  # fast wiring check
+```
+
+### 4) User-side value probe (`src/features/user_axes.py` + `witnesses/probe_E2c_user_value.py`, E2-4, no API)
+
+E2-4는 KAR의 두 번째(user/reasoning) leg를 ①control·④audience에 붙여 **2-source × 4-use 분해**를 완성한다.
+`src/features/user_axes.py`:
+- `build_user_representations(...)` → 공통 `customer_id` 순서로 정렬된 train-derived 유저 표현 3종:
+  **reasoning_bge**(`data/embeddings/user_bge_embeddings.npz` 768→PCA-50 + BGE isotropy), **reasoning_fields**
+  (`reasoning_json` 9 prose 필드 → TF-IDF/SVD-50 + L1-aggregate numeric), **demographic**(11-d baseline =
+  `data/features/user_features.npz` 8 numeric + 3 one-hot, `src/features/engineering.py` 레이아웃).
+- `build_future_outcomes(val_txn, articles, immediate_gt, cohort)` → **FUTURE** 라벨(val/immediate만 touch):
+  `fut_price_tier`(val 평균가 → **train-frozen** quintile edges), `fut_top_group`(MODE product_group 19),
+  `fut_online`/`fut_repurchase`/`fut_bought`/`fut_n_types`.
+
+`witnesses/probe_E2c_user_value.py`는 E2 steer spine·D5 `_cv_predict`/`_paired_sig`/`_effective_k`·
+`audience_signals.segment_divergence_weighted`를 재사용해 {reasoning_bge, reasoning_fields} × ①②③④를
+채점하고 `witnesses/probe_E2c_user_value.json` + `results/figures/E2c_user_value.png`(2-source×4-use heatmap)를
+출력한다. `probe_E2_result.json`/`probe_E2b_result.json` **mtime 불변 assert**. 결과: **KAR-SYMMETRY CONFIRMED**
+(④ audience modest PASS 둘 다 — `fut_top_group` Δ+0.0117/+0.0145; ① control NO 둘 다; ②③ N/A-SEMANTICS).
+
+```bash
+PYTHONPATH=. python -u witnesses/probe_E2c_user_value.py          # full (n_cohort 40k, perm 1000)
+PYTHONPATH=. python -u witnesses/probe_E2c_user_value.py --quick  # fast wiring check (2k, perm 300)
+```
+
+### 5) gap축 FUTURE decision-lift probe (`witnesses/probe_E2d_gap_decision.py`, E2-5, no API)
+
+gap축(value_gap/trend_gap)이 **자기 구성축 + product_group 대비** 미래(val 2020-07~08) 결정값을 더하는지
+검증. 신규 src 함수 `src/features/enrichment_matrix.py::build_article_future_outcomes(article_ids, data_dir)`
+— per-article held-out FUTURE outcome(`compute_sell_through`/`compute_merch_signals`를 val window에 재사용,
+train-frozen reference price·`PRAGMA threads=1`로 AVG 결정성). 반환 컬럼: `fut_price_drop`·`fut_markdown_depth`·
+`fut_velocity`·`fut_first_week_st`·`fut_momentum_change`·`fut_val_n`·`has_val_sale`(left-join → canonical order,
+absent→NaN/0). probe는 2 gap축 × 4 결정(markdown-risk·hidden-gem·overhype/sleeper·survival) × 2 readout
+(incremental paired-fold macro-F1 of [one-hot 구성축 + gap] over [one-hot 구성축] · decision-rule precision@flag),
+placebo 2종(within-group shuffle·**sign-randomization**)·Ridge ΔR²·partial-corr robustness로 채점. **구성축은
+one-hot**(ordinal로 넣으면 gap=c1−c2 collinearity로 Δ≡0 거짓-NO) — D5 `_cv_predict`/`_paired_sig`/`_quantile_bucket`·
+`_probe_common.bootstrap_delta` 재사용. `probe_E2/E2b_result.json` **mtime 불변 assert**. 결과: **CLEAN NEGATIVE**
+(5/5 cell 0.01 macro-F1 margin 미달, PRELIM 0 → gap = 비중복 *해석* 좌표이나 *예측/결정* 축 아님 확정).
+`--repro`로 byte-identical 이중실행 검증. 출력 `witnesses/probe_E2d_gap_decision.json` +
+`results/figures/E2d_gap_decision.png`.
+
+```bash
+PYTHONPATH=. python3 -u witnesses/probe_E2d_gap_decision.py            # full (n_boot 1000)
+PYTHONPATH=. python3 -u witnesses/probe_E2d_gap_decision.py --quick --repro  # fast + byte-identical check
+```
+
+### 6) Serendipity/novelty probe (`witnesses/probe_23_serendipity.py`, R-10, no API)
+
+enrichment(L2/L3/external 임베딩)이 *정확도*가 아닌 **serendipity·novelty·long-tail-hit**(redesign §65/§96의 "L3 마지막 rescue 경로")를 향상하나 검증. 정확도(probe_21)·diversity/coverage(probe_02)는 이미 닫힌 negative라 guardrail-context로만 재현. 신규 `witnesses/_probe_common.py` 순수 metric 함수: `item_novelty(topk, pop_prob)`·`longtail_exposure(topk, tail_mask)`·`hit_count`/`tail_hit_count`/`serendipitous_hit_count(topk, gts, canon_ids, ...)` (relevance-grounded). probe는 7 variant(META/L1/L2/L3/L1+L2+L3/external_prose/external_struct)를 `score_variant`로 top-12 retrieval → 6 metric(HR guardrail·div/cov context·novelty·tail-exposure·**S1 long-tail-hit·S2 serendipity**) + **S2b(labeling-symmetric serendipity, fair test)** + placebo(random-12) + 결정-축 hit 특성화. surprise threshold τ는 **L1 baseline서 frozen**(variant가 자기 임계값 못 고름); GT=`immediate_ground_truth`(차주 NEW = discovery-native). `bootstrap_delta` CI, prior probe JSON **mtime 불변 assert**. **결과: CLEAN NEGATIVE (tie at best)** — 5/5 enrichment variant가 S1/S2/S2b 어디서도 L1 못 넘음(matched-HR L1+L2+L3 S2b 동률); **placebo가 novelty 최고지만 serendipitous hit ≈0**(novelty 함정 실증). 출력 `witnesses/probe_23_result.json` + `results/figures/probe_23_serendipity.png`.
+
+```bash
+PYTHONPATH=. python3 -u witnesses/probe_23_serendipity.py                  # full (25k users, STRONG)
+PYTHONPATH=. python3 -u witnesses/probe_23_serendipity.py --quick --repro  # fast (3k) + byte-identical
+```
+
+---
+
+## Merchandising Scenarios (`scripts/serve_scenarios.py`)
+
+value matrix가 닫은 **lift PASS 3 cell**(모두 행동-파생 축)을 머천다이저용 **batch 의사결정-지원 brief**로
+제품화하는 product-design build (C 백로그 a). 운영 brief 테이블은 `matrix_axes.parquet` + 거래에서 fresh
+계산하되, *confidence 수치*(r·η·CI·verdict)는 canonical `witnesses/probe_E2*.json`에서 **로드**(재계산 안 함)
+→ value matrix가 single source of truth. CPU/DuckDB only, **API $0**.
+
+### CLI Arguments
+
+| 인자 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `--scenario` | str | `all` | `all` \| `trend-leadtime` \| `launch-signal` \| `copurchase-velocity` |
+| `--matrix-path` | Path | `data/knowledge/enrichment_v2/matrix_axes.parquet` | 입력 매트릭스 |
+| `--data-dir` | Path | `data/processed` | `train_transactions.parquet` + `articles.parquet` |
+| `--output-dir` | Path | `results/tables/merch_scenarios` | brief 테이블 출력 (parquet + csv) |
+| `--top-k` | int | `50` | item-level brief 최대 행 (trend-leadtime은 항상 전체 ~10 카테고리) |
+| `--verbose` | flag | off | 상세 로깅 |
+
+### Example Commands
+
+```bash
+# 3 시나리오 모두 산출 + 정직한 posture 출력
+PYTHONPATH=. python scripts/serve_scenarios.py --scenario all --output-dir results/tables/merch_scenarios
+
+# 단일 시나리오
+PYTHONPATH=. python scripts/serve_scenarios.py --scenario trend-leadtime
+```
+
+### 3 PASS-cell briefs
+
+- **A. Trend lead-time** (`trend_phase`→②): 카테고리 hot(Emerging+Rising) share z-score로 3개월 수요-상승
+  조기경보. 근거 r=**0.472** vs null 0.062 (lag 3mo, CI[0.194,0.640]).
+- **B. Launch signal** (`trend_phase`→③): hot cohort(최소구매 10) 예상 first_week_sell_through 스코어카드.
+  근거 η=**0.673** (resid product_group) vs metadata 0.223.
+- **C. Co-purchase velocity** (`outfit_role`→③): anchor 역할(Anchor-hub·Versatile-connector) velocity 랭킹 +
+  번들 역할 라벨. 근거 η=**0.631** (resid product_group) vs metadata 0.534.
+
+`value_matrix_posture()`가 **capability 14/16 vs lift 3/16** 전체를 노출하고, 제품화하지 않는 셀(① automatic
+lift·④ audience·gap축·recsys-accuracy negative)을 명시 맥락화한다.
+
+### Internal Calls
+
+`src/serving/merch_scenarios.py`:
+- `load_confidence_cards(cfg) → dict[str, ConfidenceCard]` — canonical E2b JSON에서 3 PASS cell의 r/η/CI/verdict 로드.
+- `trend_leadtime_brief(cfg, cards=None, top_k=None)` — `lead_lag.monthly_attribute_share` + `lead_lag.lead_lag_corr`
+  재사용(lag-3 r=0.4723 deterministic 재현), 카테고리별 hot-share z-score 랭킹.
+- `launch_signal_brief(cfg, cards=None, top_k=50, min_purchases=10)` — `matrix_axes`의 `first_week_sell_through`로
+  trend_phase별 sell-through 티어 + hot cohort 스코어카드.
+- `copurchase_velocity_brief(cfg, cards=None, top_k=50)` — `matrix_axes`의 `velocity`로 outfit_role 티어 + anchor 랭킹.
+- `build_all_briefs(cfg, item_top_k=50) → list[ScenarioBrief]`, `value_matrix_posture(cfg) → pd.DataFrame`(attrs:
+  capability_yes·lift_pass·pass_cells·recsys_negative).
+- NamedTuple: `ScenarioConfig`(paths+seed), `ConfidenceCard`(cell·metric·value·baseline·ci·verdict·best_lag),
+  `ScenarioBrief`(name·title·table·confidence·caveat·extra).
+
+노트북 `notebooks/06_merch_scenario.ipynb`(builder `notebooks/builders/build_06_merch_scenario.py`)는 위 엔진을
+**호출만** 하는 thin 프레젠테이션 — Part 0 framing(value-matrix heatmap) → A/B/C 시나리오(figure `results/figures/06_*.png`)
+→ Part 4 정직한 경계. 테스트 `tests/unit/test_merch_scenarios.py`(8 PASS): canonical 일치 가드 + lead-lag 재현 +
+brief well-formedness.
+
+---
+
 ## Model Training (`scripts/train.py`)
 
 Trains baseline models or neural backbones (DeepFM, DCN-v2, LightGCN, DIN, SASRec) and saves predictions as JSON.
@@ -407,6 +738,9 @@ Trains baseline models or neural backbones (DeepFM, DCN-v2, LightGCN, DIN, SASRe
 | `--backbone` | str | (required) | Model type (see below) |
 | `--k` | int | 12 | Number of recommendations per user |
 | `--split` | str | "val" | Split to predict on: val or test |
+| `--eval-split` | str | None | Eval GT split: val \| test \| immediate (overrides `--split` for baseline GT; `immediate` = Kaggle-comparable next-period window) |
+| `--train-end` | str | "2020-06-30" | Train cut-off date (repurchase/recent_popularity recency window) |
+| `--recent-days` | int | 14 | Recent-popularity window in days (repurchase/recent_popularity) |
 | `--features-dir` | Path | None | Feature directory (required for neural backbones) |
 | `--learning-rate` | float | 0.001 | Learning rate |
 | `--batch-size` | int | 2048 | Batch size |
@@ -414,10 +748,15 @@ Trains baseline models or neural backbones (DeepFM, DCN-v2, LightGCN, DIN, SASRe
 | `--patience` | int | 3 | Early stopping patience |
 | `--d-embed` | int | 16 | Embedding dimension |
 | `--dropout-rate` | float | 0.1 | Dropout rate |
+| `--use-id-embed` | bool | False | Add per-user/per-item id embeddings (deepfm/dcnv2 CF capacity; items sharing metadata get distinct scores) |
+| `--bce-pos-weight` | float | 1.0 | Positive-class weight in BCE (>1 up-weights positives; counters neg-sampling skew; deepfm/dcnv2) |
 | `--no-wandb` | bool | False | Disable W&B logging |
 | `--random-seed` | int | 42 | Random seed |
 | `--num-workers` | int | 4 | Grain data loader workers |
 | `--prefetch-buffer-size` | int | 2 | Batches to prefetch per worker |
+| `--val-sample-users` | int | 50000 | Epoch-end validation users (drives early stop; batched scoring) |
+| `--midval-sample-users` | int | 5000 | Mid-epoch validation users (cheap signal) |
+| `--pred-chunk-users` | int | 32 | Users per batched full-catalog scoring chunk (lower if OOM) |
 | `--n-cross-layers` | int | 3 | Number of cross layers (dcnv2) |
 | `--n-experts` | int | 4 | Number of MoE experts per cross layer (dcnv2) |
 | `--d-low-rank` | int | 64 | Low-rank dimension per expert (dcnv2) |
@@ -440,12 +779,31 @@ Trains baseline models or neural backbones (DeepFM, DCN-v2, LightGCN, DIN, SASRe
 | `--stage3-epochs` | int | 3 | Stage 3 end-to-end epochs |
 | `--stage3-lr-factor` | float | 0.1 | LR multiplier for stage 3 |
 
+> **검증 scoring (batched, Track B)** — `validate_sample`/`generate_predictions`(및 KAR `generate_predictions_kar`)는 유저당 per-user forward 대신 `--pred-chunk-users`명씩 묶어 전체 카탈로그를 한 번에 스코어링한다(`jax.lax.top_k`). 이전 `batch_size=1` per-user 루프(검증이 학습보다 ~5× 느렸던 병목)를 제거했다. mid-epoch는 `--midval-sample-users`(싼 신호), epoch-end는 `--val-sample-users`(early stopping 기준), 최종 eval만 전체 ground-truth로 1회 수행한다. OOM 시 `--pred-chunk-users`를 낮춘다(feature-based 메모리 ≈ chunk×105K×dims, KAR은 그 ~2배).
+
+> **공정 eval + cohort 리포팅 (FIX C)** — 최종 평가는 `split_eval_cohorts()`로 유저를 `feature_capable`(=`user_to_idx`에 존재, 모델이 실제 스코어링 가능) / `cold_start`(train feature 없음)로 분할하고, **headline 메트릭은 `feature_capable` cohort**로 보고한다. baseline(`scripts/train.py`의 popularity 등)도 `--features-dir`를 주면 **동일한 `feature_capable` 필터**로 headline을 계산하므로 DeepFM과 apples-to-apples 비교가 된다. `{backbone}_metrics.json`에는 `headline`/`cohorts`/`cohort_sizes`/`all_users`가 함께 저장된다(flattened headline 키도 backward-compat 유지).
+
+> **Numerical 정규화 + stats 영속화 (FIX A)** — `run_training`은 z-score 전에 heavy count 컬럼(user: `n_purchases`, `days_since_first_purchase`, `days_since_last_purchase`; item: `total_purchases`, max≈44761≈61σ)에 `np.log1p`를 적용해 극단 tail을 완화한다(컬럼은 `feature_meta` 이름으로 매핑). per-column mean/std/log1p_cols는 `data/features/feature_stats.json`에 저장되어 inference가 동일 변환을 재현한다. in-place 공유로 train/eval scorer가 동일 정규화를 사용한다.
+
+> **Hybrid foundation (repurchase + immediate eval).** `repurchase`/`recent_popularity` baselines + `--eval-split immediate`는 H&M의 지배 신호(repurchase + recency)를 측정 가능한 형태로 복원한다. `src/baselines/repurchase.py`가 단일 source of truth (witnesses/probe_05 로직 그대로):
+> - `recent_popularity(train_txn, train_end, days=14, k=12) -> list[str]` — 마지막 `days`일 카운트 top-k (`t_dat`는 datetime.date/datetime64 모두 허용).
+> - `repurchase_predict(train_txn, users, k=12, fill_recent=None) -> dict[user->list]` — 유저별 distinct 구매 아이템(reverse-recency) → `fill_recent`로 패딩.
+> - `hybrid_predict(train_txn, users, train_end, k=12, recent_days=14)` — `recent_popularity` fill을 계산해 `repurchase_predict`에 위임(동일 predictor).
+>
+> discovery-quality / cohort 측정은 `src/evaluation/cohorts.py` (per-user AP@k는 `src/evaluation/metrics.evaluate` 재사용, 중복 없음):
+> - `activity_cohorts(train_txn) -> dict[user->bracket]` — {new, 1, 2-4, 5-9, 10-19, 20+} by train 구매 수.
+> - `evaluate_cohorts(predictions, ground_truth, train_history, k=12) -> dict[bracket->EvalResult]`.
+> - `discovery_map(predictions, ground_truth, train_history, k=12) -> EvalResult` — **핵심 신규 메트릭**: GT를 유저 train history에 *없는* NEW 아이템으로 제한해 MAP/HR/NDCG@k 측정. repurchase는 구조상 ~0이며 LLM/content가 메워야 할 discovery gap을 격리한다(new-GT 빈 유저는 스킵).
+> - `repurchase_vs_new_decomposition(ground_truth, train_history) -> DecompositionResult(repurchase_frac, new_frac, n_gt_items)`.
+
 ### Available Backbones
 
 | Backbone | Description | Key Hyperparameters |
 |----------|-------------|---------------------|
 | `popularity_global` | Top-K most purchased items (all time) | k |
-| `popularity_recent` | Top-K most purchased items (last 7 days) | k, window_days=7 |
+| `popularity_recent` | Top-K most purchased items (last 7 days, DuckDB) | k, window_days=7 |
+| `recent_popularity` | Top-K most purchased items in last `--recent-days` (pandas, hybrid fill list) | k, recent_days=14, train_end |
+| `repurchase` | **Hybrid backbone**: per-user own recent items (reverse-recency) padded with recent-popularity. Kaggle-competitive on `--eval-split immediate` (MAP@12 ≈ 0.024) | k, recent_days=14, train_end |
 | `userknn` | ALS collaborative filtering (implicit) | factors=128, reg=0.01, iter=15 |
 | `bprmf` | BPR matrix factorization (implicit) | factors=128, lr=0.01, iter=100 |
 | `deepfm` | DeepFM (FM + DNN, Flax NNX) — Level 1 metadata baseline | d_embed, learning_rate, batch_size, dropout_rate |
@@ -462,6 +820,19 @@ python scripts/train.py --data-dir data/processed --model-dir results/models --b
 python scripts/train.py --data-dir data/processed --model-dir results/models --backbone popularity_recent
 python scripts/train.py --data-dir data/processed --model-dir results/models --backbone userknn
 python scripts/train.py --data-dir data/processed --model-dir results/models --backbone bprmf
+
+# Hybrid foundation baselines on the immediate-next-period (Kaggle-comparable) split.
+# repurchase ≈ MAP@12 0.024 (reproduces witnesses/probe_05); recent_popularity ≈ 0.003.
+python scripts/train.py \
+    --data-dir data/processed \
+    --model-dir results/models \
+    --backbone repurchase \
+    --eval-split immediate --train-end 2020-06-30 --recent-days 14
+python scripts/train.py \
+    --data-dir data/processed \
+    --model-dir results/models \
+    --backbone recent_popularity \
+    --eval-split immediate --train-end 2020-06-30 --recent-days 14
 
 # DeepFM (Level 1: metadata baseline)
 python scripts/train.py \
@@ -490,6 +861,17 @@ python scripts/train.py \
     --backbone deepfm \
     --no-wandb \
     --num-workers 0
+
+# DeepFM with per-user/per-item id embeddings + positive up-weighting
+# (id embeds give metadata-identical items distinct scores; pos-weight counters
+#  the 4:1 neg-sampling skew). Works for dcnv2 too.
+python scripts/train.py \
+    --data-dir data/processed \
+    --features-dir data/features \
+    --model-dir results/models \
+    --backbone deepfm \
+    --use-id-embed \
+    --bce-pos-weight 4.0
 
 # DCN-v2 (same features as DeepFM, different architecture)
 python scripts/train.py \
@@ -689,6 +1071,8 @@ Global NamedTuple definitions:
 | `ExtractionResult` | output_path, n_products, n_api_calls, cost, coverage | Extraction run summary |
 | `ReasoningConfig` | model, use_batch_api, max_concurrent, batch_max_requests(500), min_purchases(5), recent_items_limit(20), l1_time_weight_halflife_days(90), max_cost_usd(120.0), ... | User profiling settings |
 | `ReasoningResult` | output_path, n_active_users, n_sparse_users, n_api_calls, cost | Profile run summary |
+| `ExternalExtractionConfig` | model(gpt-4.1-nano), concurrency(32), max_retries(4), max_cost_usd(12.0), checkpoint_interval(1000), max_complements(3), detail_desc_chars(200) | External (open-world styling) knowledge extraction settings |
+| `ExternalExtractionResult` | output_path, n_product_codes, n_articles, n_api_calls, n_cache_hits, tokens, cost, coverage_prose, coverage_structured | External extraction run summary |
 | `FeatureConfig` | neg_sample_ratio(4), reference_date, age_bins, age_labels, random_seed(42), chunk_size | Feature engineering settings |
 | `FeatureResult` | output_dir, n_users, n_items, n_train_pairs, feature counts, vocab sizes | Feature engineering output |
 | `DeepFMConfig` | d_embed(16), dnn_hidden_dims(256,128,64), dropout_rate(0.1), use_batch_norm | DeepFM hyperparameters |
@@ -1194,6 +1578,8 @@ Builds user/item features from preprocessed data using DuckDB aggregation (train
 | `--data-dir` | Path | "data/processed" | Preprocessed data directory |
 | `--output-dir` | Path | "data/features" | Output directory for feature matrices |
 | `--neg-sample-ratio` | int | 4 | Negative samples per positive |
+| `--neg-strategy` | str | "uniform" | Negative sampling distribution: `uniform` \| `popularity` (∝ item train popularity) \| `mixed` |
+| `--neg-mixed-pop-frac` | float | 0.5 | Fraction of popularity-proportional negatives when `--neg-strategy=mixed` |
 | `--random-seed` | int | 42 | Random seed for negative sampling |
 | `--verbose` | bool | False | Verbose logging |
 | `--build-sequences` | bool | False | Build sequential features for DIN/SASRec |
@@ -1235,6 +1621,18 @@ python scripts/build_features.py \
     --data-dir data/processed \
     --output-dir data/features \
     --neg-sample-ratio 2
+
+# Popularity-aware (hard) negatives — sample negatives ∝ item train popularity
+python scripts/build_features.py \
+    --data-dir data/processed \
+    --output-dir data/features \
+    --neg-strategy popularity
+
+# Mixed: 50% popularity-proportional + 50% uniform negatives
+python scripts/build_features.py \
+    --data-dir data/processed \
+    --output-dir data/features \
+    --neg-strategy mixed --neg-mixed-pop-frac 0.5
 
 # Build features + sequential features for DIN/SASRec
 python scripts/build_features.py \
@@ -1425,6 +1823,7 @@ python scripts/segment.py \
 | `--embeddings-dir` | `data/embeddings` | 임베딩 출력 디렉토리 |
 | `--bge-model` | `BAAI/bge-base-en-v1.5` | BGE 모델명 |
 | `--bge-batch-size` | `256` | 인코딩 배치 크기 |
+| `--bge-device` | `mps` | BGE 디바이스: mps \| cpu \| cuda \| cuda:1 (CUDA 호스트에서 임베딩 재생성 시 `cuda:1`) |
 | `--customer-method` | `kmeans` | 클러스터링 방법 |
 | `--embeddings-only` | `False` | 임베딩만 계산 |
 | `--skip-embeddings` | `False` | 임베딩 계산 건너뛰기 |
@@ -1584,9 +1983,9 @@ data/embeddings/item_bge_embeddings.npz ───┘
 REMOTE_USER=mail-agent
 REMOTE_HOST=3.38.195.121
 REMOTE_PORT=5040
-SSH_KEY=                                                  # 비우면 기본 키/패스워드 (키 인증이면 비움)
-REMOTE_DIR=/home/mail-agent/project/llm-factor-recsys-hnm
-REMOTE_RSYNC=/home/mail-agent/.local/bin/rsync            # 서버 userland rsync (시스템 rsync 있으면 비움)
+SSH_KEY=                                          # 비우면 기본 키/패스워드 (키 인증이면 비움)
+REMOTE_DIR=/home/mail-agent/llm-factor-recsys-hnm
+REMOTE_RSYNC=/home/mail-agent/.local/bin/rsync    # 서버 userland rsync (시스템 rsync 있으면 비움)
 ```
 
 서버에 시스템 rsync가 없을 경우(no-sudo) userland 설치:
@@ -1613,7 +2012,6 @@ chmod +x ~/.local/bin/rsync
 | `push-knowledge` | local→server | `data/knowledge/` (~1.6G) | LLM 산출물(재생성 불가) |
 | `push-data` | local→server | `processed/features/embeddings/segmentation/knowledge` | raw 32G 제외 |
 | `pull` | server→local | `results/` | 모델·예측 회수. `--delete` 미사용(로컬 보호) |
-| `push-skill <name>...` | local→server | `~/.claude/skills/<name>` (프로젝트 밖 글로벌 스킬) | 디렉터리/파일 모두 가능. 예: `portfolio-design USAGE.md` |
 | `remote "<cmd>"` | — | 서버에서 명령 실행 | 예: `remote "whoami && pwd"` |
 
 ### 플래그
@@ -1637,15 +2035,11 @@ chmod +x ~/.local/bin/rsync
 # LLM 지식 데이터 업로드 (1회성, 이후 델타)
 ./scripts/sync.sh push-knowledge
 
-# 글로벌 스킬 업로드 (프로젝트 밖 ~/.claude/skills/)
-./scripts/sync.sh push-skill -n portfolio-design USAGE.md   # 미리보기
-./scripts/sync.sh push-skill portfolio-design USAGE.md
-
 # 서버에서 학습 후 결과 회수
 ./scripts/sync.sh pull
 
 # 서버에서 학습 트리거
-./scripts/sync.sh remote "cd ~/project/llm-factor-recsys-hnm && python scripts/train.py --backbone deepfm"
+./scripts/sync.sh remote "cd ~/llm-factor-recsys-hnm && python scripts/train.py --backbone deepfm"
 ```
 
 ### 제외 규칙 (`.rsync-exclude`)

@@ -24,20 +24,35 @@ def main(
     data_dir: Path = typer.Option("data/processed", help="Directory with preprocessed Parquet files"),
     output_dir: Path = typer.Option("data/features", help="Output directory for feature matrices"),
     neg_sample_ratio: int = typer.Option(4, help="Negative samples per positive"),
+    neg_strategy: str = typer.Option(
+        "uniform", help="Negative sampling: uniform | popularity | mixed"
+    ),
+    neg_mixed_pop_frac: float = typer.Option(
+        0.5, help="Fraction of popularity-proportional negatives when --neg-strategy=mixed"
+    ),
     random_seed: int = typer.Option(42, help="Random seed for negative sampling"),
     verbose: bool = typer.Option(False, help="Verbose logging"),
     build_sequences: bool = typer.Option(False, help="Build sequential features for DIN/SASRec"),
     max_seq_len: int = typer.Option(50, help="Max sequence length (requires --build-sequences)"),
 ) -> None:
     """Build features: user/item stats + negative sampling → .npz files."""
+    valid_strategies = ("uniform", "popularity", "mixed")
+    if neg_strategy not in valid_strategies:
+        raise ValueError(
+            f"Unknown --neg-strategy '{neg_strategy}'. Choose from: {valid_strategies}"
+        )
+
     config = FeatureConfig(
         neg_sample_ratio=neg_sample_ratio,
+        neg_strategy=neg_strategy,
+        neg_mixed_pop_frac=neg_mixed_pop_frac,
         random_seed=random_seed,
     )
 
     print(f"[build_features] Data dir: {data_dir}")
     print(f"[build_features] Output dir: {output_dir}")
     print(f"[build_features] Neg sample ratio: {neg_sample_ratio}")
+    print(f"[build_features] Neg strategy: {neg_strategy}")
     print(f"[build_features] Random seed: {random_seed}")
 
     result = run_feature_engineering(data_dir, output_dir, config)

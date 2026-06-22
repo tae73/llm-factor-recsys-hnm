@@ -3,7 +3,9 @@ batch_size: 2048
 max_epochs: 50
 patience: 3
 val_every_n_steps: 5000
-val_sample_users: 1000
+val_sample_users: 50000      # epoch-end validation, batched scoring (Track B)
+midval_sample_users: 5000    # mid-epoch validation (cheap signal)
+pred_chunk_users: 32         # users per batched full-catalog scoring chunk
 random_seed: 42
 log_every_n_steps: 500
 use_wandb: true

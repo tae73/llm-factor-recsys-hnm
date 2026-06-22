@@ -1,0 +1,72 @@
+{
+  "probe": "probe_14_layer_predictability",
+  "n_train": 20000,
+  "n_test": 5000,
+  "knn": 15,
+  "per_attribute": {
+    "l2_style_mood": {
+      "knn_acc": 0.7102,
+      "majority_acc": 0.4478,
+      "lift": 0.47519014849692154,
+      "n_classes": 21
+    },
+    "l2_perceived_quality": {
+      "knn_acc": 0.8092,
+      "majority_acc": 0.725,
+      "lift": 0.30618181818181833,
+      "n_classes": 4
+    },
+    "l2_trendiness": {
+      "knn_acc": 0.7512,
+      "majority_acc": 0.635,
+      "lift": 0.31835616438356157,
+      "n_classes": 4
+    },
+    "l2_season_fit": {
+      "knn_acc": 0.758,
+      "majority_acc": 0.564,
+      "lift": 0.4449541284403671,
+      "n_classes": 5
+    },
+    "l2_versatility": {
+      "knn_acc": 0.7292,
+      "majority_acc": 0.6114,
+      "lift": 0.3031394750385999,
+      "n_classes": 5
+    },
+    "l3_color_harmony": {
+      "knn_acc": 0.6394,
+      "majority_acc": 0.336,
+      "lift": 0.45692771084337347,
+      "n_classes": 8
+    },
+    "l3_tone_season": {
+      "knn_acc": 0.6164,
+      "majority_acc": 0.4016,
+      "lift": 0.3589572192513368,
+      "n_classes": 6
+    },
+    "l3_coordination_role": {
+      "knn_acc": 0.7276,
+      "majority_acc": 0.6592,
+      "lift": 0.20070422535211274,
+      "n_classes": 6
+    },
+    "l3_visual_weight": {
+      "knn_acc": 0.7358,
+      "majority_acc": 0.507,
+      "lift": 0.4640973630831643,
+      "n_classes": 5
+    },
+    "l3_style_lineage": {
+      "knn_acc": 0.5128,
+      "majority_acc": 0.1538,
+      "lift": 0.42424958638619714,
+      "n_classes": 44
+    }
+  },
+  "mean_lift": 0.3752757839457453,
+  "L2_mean_lift": 0.3695643469082537,
+  "L3_mean_lift": 0.3809872209832369,
+  "verdict": "DIAGNOSIS CONFIRMED — L1 predicts L2/L3 (mean lift=0.38): L2/L3 are product-internal redescriptions of L1, redundancy is by-construction"
+}

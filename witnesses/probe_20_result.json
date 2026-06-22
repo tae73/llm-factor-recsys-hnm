@@ -1,0 +1,26 @@
+{
+  "probe": "probe_20_fusion_x_format",
+  "n_eligible": 12000,
+  "n_eval": 3600,
+  "epochs": 200,
+  "n_seeds": 3,
+  "mean": {
+    "A": 0.003836380740723774,
+    "C_prose": 0.004839106851630901,
+    "C_unified": 0.003896901811299007,
+    "C_both": 0.005258707537965645,
+    "C_prose_dup": 0.004804393538030001
+  },
+  "std": {
+    "A": 0.0005183553228396639,
+    "C_prose": 0.0004920502815462767,
+    "C_unified": 0.0006047287091154944,
+    "C_both": 0.00026703889769681325,
+    "C_prose_dup": 0.0001777433144845208
+  },
+  "C_both_minus_C_prose": 0.0004196006863347434,
+  "C_both_minus_C_prose_dup": 0.0004543139999356434,
+  "C_unified_minus_C_prose": -0.0009422050403318943,
+  "sign_both_gt_dup": 3,
+  "verdict": "UNIFY ADDS — format-unified external adds real info on top of prose under learned fusion (C_both−C_prose_dup=+0.00045, 3/3 seeds)"
+}

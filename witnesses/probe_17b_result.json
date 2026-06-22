@@ -1,0 +1,28 @@
+{
+  "probe": "probe_17b_adversarial",
+  "n_eligible": 8000,
+  "overall_disc_map": {
+    "L1_profile": 0.0024381622325966444,
+    "ext_meansim": 0.0011043614616617077,
+    "ext_maxsim": 0.0010057045539833098,
+    "L1_maxsim": 0.0028886581374767766,
+    "ext_maxsim+L1": 0.0018663430316292803
+  },
+  "same_pg_disc_map": {
+    "L1_profile": 0.002745609764014672,
+    "ext_maxsim": 0.001141114673807952
+  },
+  "cross_pg_disc_map": {
+    "L1_profile": 0.00027304499781564,
+    "ext_maxsim": 3.608094613992386e-05
+  },
+  "ext_maxsim_vs_L1": {
+    "delta": -0.0014324576786133353,
+    "rel": -0.5875153258722111,
+    "ci": [
+      -0.002213880851977165,
+      -0.0007214721138772428
+    ]
+  },
+  "verdict": "NO-GO ROBUST — external (max-sim, selective) <= L1 overall AND on cross-category subset: option-1 (full external-KAR for discovery) dead even with a trained Expert"
+}

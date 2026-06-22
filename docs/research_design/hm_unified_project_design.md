@@ -599,7 +599,7 @@ x'_item = x_item + attention
 
 가장 표현력이 높지만 계산 비용도 높다. 소규모 d_rec(64-128)에서는 부담이 크지 않다.
 
-**실험 계획:** F2(Addition)를 기본으로 설정하고, F1/F3/F4를 대비 실험으로 수행한다. KAR 원 논문에서 Addition이 효과적이었다.
+**실험 계획:** F2(Addition)를 기본으로 설정하고, F1/F3/F4를 대비 실험으로 수행한다. KAR 원 논문에서 Addition이 효과적이었다. **단, 결합 연산(F1~F4) 선택보다 그 앞단 Expert의 학습 projection 유무가 1차적으로 중요함이 실증되었다 — 외부/장르-이질 지식에는 frozen raw Addition이 실패하고 학습 Expert가 필수(→ 7.4.4).**
 
 #### 7.4.3 H&M 추가 피처 통합
 
@@ -613,6 +613,38 @@ H&M 데이터에는 ID 임베딩과 속성 벡터 외에도 활용할 수 있는
 x'_item = Fusion(x_item, e_aug^item, feat_item)
 x'_user = Fusion(x_user, e_aug^user, feat_user)
 ```
+
+#### 7.4.4 ★ Fusion/Expert의 역할 — 재설계 실증 (2026-06, probe 17–20)
+
+> 재설계 세션(`redesign_2026-06.md` §12, contribution `R-8`)에서 **Expert(학습 projection)→Fusion 경로가
+> 외부지식 가용성을 가르는 *핵심 레버*** 임이 실증되었다. 원 설계 7.4.2의 "F2-Addition 기본"은 *결합 연산*으로는
+> 유효하나, **가치를 만드는 것은 그 앞단의 학습된 Expert projection** 이라는 점이 정량 확인되었다. 핵심 발견:
+
+- **frozen raw 임베딩 결합은 외부지식을 죽인다.** 외부 styling 지식을 BGE raw 임베딩으로 cosine/Addition하면
+  user-level discovery에서 **L1 대비 −60%**(probe_17/17b). 외부지식 텍스트(styling 산문)와 L1 텍스트(속성 나열)의
+  *장르 불일치*가 raw 공간에서 정렬되지 않기 때문이다.
+- **학습된 Expert projection이 그 불일치를 메운다.** BGE→rec 공간 학습 투영 + item-side augmentation(아래)으로
+  두 소스를 결합하면 **discovery +12.6%**(probe_18), placebo control(ext를 아이템 간 shuffle=같은 차원·분포)에서
+  **지식-고유 +0.00080 / 5 seed 중 5회 일관**(probe_18b) — 이득은 *용량*이 아니라 *외부지식 내용*. 즉
+  **Expert(학습 projection)를 건너뛰고 frozen raw를 Addition하면 외부지식 가치가 실현되지 않는다.**
+- **item-side augmentation이 결정적.** 가치의 대부분은 *유저 프로파일* 증강이 아니라 **후보 아이템 벡터를 그
+  외부지식으로 증강**(원 설계 7.6 "변형 1: 아이템 수준 Fusion")에서 나왔다(probe_18 config C ≫ B). KAR의
+  아이템-측 augmentation 메커니즘이 외부지식에서 특히 중요.
+- **format 통일은 단독으론 무익, multi-view로는 상보적.** 외부지식을 L1 속성 format으로 통일(압축)해도 frozen은
+  안 풀리고(probe_19 NEUTRAL), 학습 하에서도 *단독 unified*는 L1과 동급(probe_20 C_unified≈A). 그러나 **산문+구조화
+  두 view를 함께** 넣으면 capacity 대조(C_prose_dup)를 넘어 **+0.00045 / 3 seed 중 3회**(probe_20 C_both) — 같은
+  외부지식의 *서로 다른 format이 상보적 시그널*. → 설계 함의: 외부지식 Expert 입력은 **단일 format 강제보다 multi-view
+  텍스트(산문 rationale + 구조화 속성)** 가 유리.
+
+**설계 결론(원 설계 보강):**
+1. 외부/장르-이질 지식에는 **frozen Addition(F2-raw) 금지 — 학습된 Expert projection 필수**. F1~F4의 *결합 연산*
+   선택보다 **Expert의 학습 투영 유무**가 1차적으로 중요.
+2. **item-side Fusion(7.6 변형 1)을 기본 포함** — 외부지식 가치의 주 원천.
+3. 외부지식 텍스트는 **multi-view(산문+구조화)** 로 구성(probe_20). 단일 format 통일은 비권장.
+4. ⚠️ scope: de-risk 규모(3,426 아이템 추출·pool=5K re-ranker·frozen BGE 위 소형 2-tower). full KAR
+   end-to-end(Expert+Gating+Fusion, 47K 추출)에서의 재확인은 후속(1c). canonical: `witnesses/probe_1{7,7b,8,8b,9}_result.json`, `probe_20_result.json`.
+5. ⚠️ **full-scale 정정(probe 21·22):** 학습된 fusion은 외부지식을 *사용 가능*하게 만들지만, **full 카탈로그 coverage(100%, $4.03 추출)에서는 외부지식이 대표·cold-start 유저에 대해 L1 대비 증분 가치를 주지 못한다**(probe_21 KAR 0.00424 vs L1 0.00482 −12%, 0/3 NO-GO). de-risk +17%는 **population-편향**(de-risk eligible=인기 아이템 heavy buyer)이었음이 probe_22 isolation으로 확정됨. **따라서 외부지식 item-side augmentation은 본 데이터의 일반 discovery 추천기에 권장하지 않는다** — content L1만으로 popularity를 +80~104% 능가하는 것이 견고한 결과. (위 1~3의 *fusion/Expert 학습 projection* 교훈은 일반 원칙으로 유효.)
+6. ⚠️ **전 축 확장(R-10, probe_23, 2026-06-19):** negative는 정확도에 국한되지 않는다 — enrichment(L2/L3/external 임베딩)는 **diversity·coverage**(probe_02 −7.7%/−2.3%)에 더해 **serendipity·novelty·long-tail-hit**(R-10, full-catalog 105K·25K user·discovery-native GT, STRONG)에서도 L1을 못 넘는다. serendipity는 **tie at best**(matched-HR L1+L2+L3가 fair labeling-symmetric S2b서 동률, rel −0.02·CI[−0.0010,+0.0010] 0포함; frozen-τ "−60%"는 ~94% labeling 산물=적대 audit 교정), 나머지 4 variant는 LOSE. **placebo(random-12)가 novelty·tail-exposure 최고지만 serendipitous hit ≈0** = novelty는 relevance 없으면 무의미. → 추천 가치지도가 **정확도·diversity·coverage·serendipity·novelty 전 축 negative**로 닫힘: enrichment의 *소비자-추천* 역할은 없고 가치는 merchant-side(C-1)·해석 결정-축(E2)·human-in-the-loop 제어(probe_15 capability)에 국한. canonical `witnesses/probe_23_result.json`. ([[recsys-negative-established]])
 
 ### 7.5 모듈 D: 추천 백본 모델
 
@@ -992,7 +1024,7 @@ G1 (Fixed), G2 (Expert-conditioned, 기본, KAR 원 방식), G3 (Context-conditi
 
 #### 8.2.4 Fusion 변형 (4 변형)
 
-F1 (Concat), F2 (Addition, 기본), F3 (Gated Addition), F4 (Cross-Attention).
+F1 (Concat), F2 (Addition, 기본), F3 (Gated Addition), F4 (Cross-Attention). **재설계 실증(→ 7.4.4): 이 4종 결합 연산보다 Expert의 학습 projection·item-side augmentation이 외부지식 가치를 1차적으로 결정. 외부지식 텍스트는 multi-view(산문+구조화) 권장.**
 
 #### 8.2.5 백본 변형 (5 변형)
 

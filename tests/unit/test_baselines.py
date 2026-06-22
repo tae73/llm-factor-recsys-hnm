@@ -1,15 +1,18 @@
 """Unit tests for src/baselines module."""
-import tempfile
-from pathlib import Path
 
 import duckdb
-import numpy as np
+import pandas as pd
 import pytest
 
 from src.baselines.popularity import (
     compute_global_popularity,
     compute_recent_popularity,
     predict_popularity,
+)
+from src.baselines.repurchase import (
+    hybrid_predict,
+    recent_popularity,
+    repurchase_predict,
 )
 from src.baselines.utils import build_interaction_matrix
 
@@ -74,6 +77,79 @@ def test_interaction_matrix_shape(sample_train_parquet):
     assert len(idata.user_to_idx) == 3
     assert len(idata.item_to_idx) == 3
     assert idata.matrix.nnz > 0
+
+
+# ---------------------------------------------------------------------------
+# Repurchase / recent-popularity / hybrid baselines (probe_05 source of truth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def repurchase_train_txn():
+    """Deterministic train fixture for repurchase logic (train_end=2020-06-30)."""
+    return pd.DataFrame(
+        {
+            "customer_id": ["u1", "u1", "u1", "u2", "u2", "u3"],
+            "article_id": ["a1", "a2", "a1", "a3", "a4", "a5"],
+            "t_dat": pd.to_datetime(
+                [
+                    "2020-06-01",  # u1 a1
+                    "2020-06-10",  # u1 a2
+                    "2020-06-28",  # u1 a1 again (most recent)
+                    "2020-06-20",  # u2 a3
+                    "2020-06-29",  # u2 a4 (most recent)
+                    "2020-05-01",  # u3 a5 (outside 14-day recency window)
+                ]
+            ),
+        }
+    )
+
+
+def test_recent_popularity_respects_window(repurchase_train_txn):
+    """recent_popularity only counts articles in the last `days` of training."""
+    # 14-day window from 2020-06-30 → > 2020-06-16: a1(1), a3(1), a4(1); NOT a5/a2.
+    items = recent_popularity(repurchase_train_txn, train_end="2020-06-30", days=14, k=12)
+    assert "a5" not in items  # 2020-05-01 is outside the window
+    assert "a2" not in items  # 2020-06-10 is outside the 14-day window
+    assert set(items) == {"a1", "a3", "a4"}
+
+
+def test_recent_popularity_k_limit(repurchase_train_txn):
+    items = recent_popularity(repurchase_train_txn, train_end="2020-06-30", days=14, k=2)
+    assert len(items) == 2
+
+
+def test_repurchase_ranks_own_recent_first(repurchase_train_txn):
+    """A user's own items appear in reverse-recency order before the fill list."""
+    fill = ["pop1", "pop2"]
+    preds = repurchase_predict(repurchase_train_txn, ["u1"], k=12, fill_recent=fill)
+    # u1 bought a1(06-01), a2(06-10), a1(06-28). Reverse-recency distinct: [a1, a2].
+    assert preds["u1"][:2] == ["a1", "a2"]
+    # Then the fill items, de-duplicated.
+    assert preds["u1"][2:4] == ["pop1", "pop2"]
+
+
+def test_repurchase_pads_to_k_without_duplicates(repurchase_train_txn):
+    """Fill items already in the user's history are skipped; output ≤ k, unique."""
+    preds = repurchase_predict(repurchase_train_txn, ["u2"], k=3, fill_recent=["a4", "x1", "x2"])
+    # u2 distinct recent: [a4, a3]. Fill a4 is a dup → skip; add x1. Truncate to k=3.
+    assert preds["u2"] == ["a4", "a3", "x1"]
+    assert len(preds["u2"]) == len(set(preds["u2"]))
+
+
+def test_repurchase_unknown_user_gets_fill_only(repurchase_train_txn):
+    preds = repurchase_predict(repurchase_train_txn, ["ghost"], k=2, fill_recent=["p1", "p2", "p3"])
+    assert preds["ghost"] == ["p1", "p2"]
+
+
+def test_hybrid_matches_repurchase_with_recent_fill(repurchase_train_txn):
+    """hybrid_predict == repurchase_predict using recent_popularity as fill."""
+    fill = recent_popularity(repurchase_train_txn, train_end="2020-06-30", days=14, k=12)
+    expected = repurchase_predict(repurchase_train_txn, ["u1", "u2", "u3"], k=12, fill_recent=fill)
+    actual = hybrid_predict(
+        repurchase_train_txn, ["u1", "u2", "u3"], train_end="2020-06-30", k=12, recent_days=14
+    )
+    assert actual == expected
 
 
 def test_interaction_matrix_index_mapping(sample_train_parquet):

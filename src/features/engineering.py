@@ -327,6 +327,78 @@ def build_id_maps(
 # ---------------------------------------------------------------------------
 
 
+def _build_item_popularity(
+    con: duckdb.DuckDBPyConnection,
+    train_path: Path,
+    item_to_idx: dict[str, int],
+) -> np.ndarray:
+    """Per-item purchase counts aligned to item index → sampling weights.
+
+    Returns a (n_items,) float64 array of normalized probabilities (sums to 1).
+    Items with no train purchases get a small floor so they remain samplable.
+    """
+    n_items = len(item_to_idx)
+    counts = np.zeros(n_items, dtype=np.float64)
+    rows = con.execute(
+        f"""
+        SELECT article_id, COUNT(*) AS cnt
+        FROM read_parquet('{train_path}')
+        GROUP BY article_id
+        """
+    ).fetchall()
+    for aid, cnt in rows:
+        idx = item_to_idx.get(aid)
+        if idx is not None:
+            counts[idx] = float(cnt)
+    # Floor unseen items so popularity sampling never zeroes out the tail entirely.
+    counts = counts + 1.0
+    return counts / counts.sum()
+
+
+def _sample_negatives(
+    pos_user_idxs: list[int],
+    user_pos_items: dict[int, set[int]],
+    n_items: int,
+    neg_ratio: int,
+    strategy: str,
+    pop_probs: np.ndarray | None,
+    mixed_pop_frac: float,
+    rng: np.random.Generator,
+) -> tuple[list[int], list[int]]:
+    """Sample ``neg_ratio`` negatives per positive under the chosen strategy.
+
+    strategy:
+        "uniform"    — uniform over the catalog (backward-compatible default)
+        "popularity" — sampled ∝ item train popularity (hard negatives)
+        "mixed"      — each negative is popularity-drawn w.p. ``mixed_pop_frac``,
+                       else uniform.
+    Rejection-resamples collisions with the user's positive set.
+    """
+    neg_user_idxs: list[int] = []
+    neg_item_idxs: list[int] = []
+    use_pop = strategy in ("popularity", "mixed") and pop_probs is not None
+
+    for u_idx in pos_user_idxs:
+        pos_set = user_pos_items[u_idx]
+        count = 0
+        while count < neg_ratio:
+            if strategy == "popularity":
+                draw_pop = True
+            elif strategy == "mixed":
+                draw_pop = rng.random() < mixed_pop_frac
+            else:  # uniform
+                draw_pop = False
+            if draw_pop and use_pop:
+                neg_item = int(rng.choice(n_items, p=pop_probs))
+            else:
+                neg_item = int(rng.integers(0, n_items))
+            if neg_item not in pos_set:
+                neg_user_idxs.append(u_idx)
+                neg_item_idxs.append(neg_item)
+                count += 1
+    return neg_user_idxs, neg_item_idxs
+
+
 def generate_train_pairs(
     con: duckdb.DuckDBPyConnection,
     train_path: Path,
@@ -336,7 +408,9 @@ def generate_train_pairs(
 ) -> dict[str, np.ndarray]:
     """Generate (user_idx, item_idx, label) training pairs with negative sampling.
 
-    Positive pairs from train transactions, negatives sampled from non-purchased items.
+    Positive pairs from train transactions, negatives sampled from non-purchased
+    items. The ``config.neg_strategy`` controls the negative distribution
+    ("uniform" | "popularity" | "mixed"); "uniform" preserves prior behavior.
     Returns dict with keys: user_idx, item_idx, labels.
     """
     rng = np.random.default_rng(config.random_seed)
@@ -368,24 +442,27 @@ def generate_train_pairs(
     n_pos = len(pos_user_idxs)
     print(f"[features] Positive pairs: {n_pos:,}")
 
-    # Generate negative samples
+    # Generate negative samples (strategy-gated)
     neg_ratio = config.neg_sample_ratio
-    neg_user_idxs = []
-    neg_item_idxs = []
-
-    for i in range(n_pos):
-        u_idx = pos_user_idxs[i]
-        pos_set = user_pos_items[u_idx]
-        count = 0
-        while count < neg_ratio:
-            neg_item = rng.integers(0, n_items)
-            if neg_item not in pos_set:
-                neg_user_idxs.append(u_idx)
-                neg_item_idxs.append(neg_item)
-                count += 1
+    strategy = getattr(config, "neg_strategy", "uniform")
+    pop_probs = (
+        _build_item_popularity(con, train_path, item_to_idx)
+        if strategy in ("popularity", "mixed")
+        else None
+    )
+    neg_user_idxs, neg_item_idxs = _sample_negatives(
+        pos_user_idxs,
+        user_pos_items,
+        n_items,
+        neg_ratio,
+        strategy,
+        pop_probs,
+        getattr(config, "neg_mixed_pop_frac", 0.5),
+        rng,
+    )
 
     n_neg = len(neg_user_idxs)
-    print(f"[features] Negative pairs: {n_neg:,} (ratio={neg_ratio})")
+    print(f"[features] Negative pairs: {n_neg:,} (ratio={neg_ratio}, strategy={strategy})")
 
     # Combine and shuffle
     all_user_idx = np.array(pos_user_idxs + neg_user_idxs, dtype=np.int32)
@@ -469,6 +546,7 @@ def run_feature_engineering(
         "n_user_numerical": user_features.numerical.shape[1],
         "n_item_numerical": item_features.numerical.shape[1],
         "neg_sample_ratio": config.neg_sample_ratio,
+        "neg_strategy": getattr(config, "neg_strategy", "uniform"),
         "reference_date": config.reference_date,
         "random_seed": config.random_seed,
     }

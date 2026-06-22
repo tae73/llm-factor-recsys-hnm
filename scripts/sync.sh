@@ -8,7 +8,6 @@
 #   ./scripts/sync.sh push-knowledge  # data/knowledge/ 업로드 (LLM 산출물 ~1.6G)
 #   ./scripts/sync.sh push-data       # 파생 데이터 전체 업로드 (raw 32G 제외)
 #   ./scripts/sync.sh pull            # 서버 results/ → 로컬 (모델·예측 회수)
-#   ./scripts/sync.sh push-skill <name> [<name>...]  # 글로벌 스킬 업로드 (~/.claude/skills/)
 #   ./scripts/sync.sh remote "<cmd>"  # 서버에서 명령 실행 (예: remote "whoami && pwd")
 #
 # 플래그:
@@ -32,14 +31,6 @@ set -a; source "$ENV_FILE"; set +a
 : "${REMOTE_HOST:?REMOTE_HOST 미설정 (.sync.env)}"
 : "${REMOTE_PORT:?REMOTE_PORT 미설정 (.sync.env)}"
 : "${REMOTE_DIR:?REMOTE_DIR 미설정 (.sync.env)}"
-
-# 글로벌 스킬 동기화 경로 (프로젝트 밖 ~/.claude/skills/)
-LOCAL_SKILLS_DIR="$HOME/.claude/skills"
-# 원격 스킬 경로: .sync.env에서 override 가능. 기본값은 단일따옴표로 두어
-# 로컬 tilde 전개를 막고 원격 로그인 셸이 ~ 를 전개하도록 함.
-if [[ -z "${REMOTE_SKILLS_DIR:-}" ]]; then
-  REMOTE_SKILLS_DIR='~/.claude/skills'
-fi
 
 # --- ssh 명령 구성 (SSH_KEY 설정 시에만 -i 추가) ---
 SSH_OPTS=(-p "$REMOTE_PORT")
@@ -108,18 +99,6 @@ case "$CMD" in
     R+=("$REMOTE:$REMOTE_DIR/results/" results/)
     "${R[@]}"
     ;;
-  push-skill)
-    [[ $# -ge 1 ]] || { echo "usage: $0 push-skill <name> [<name>...]  (예: push-skill portfolio-design USAGE.md)" >&2; exit 1; }
-    for name in "$@"; do
-      src="$LOCAL_SKILLS_DIR/$name"
-      [[ -e "$src" ]] || { echo "WARN: $src 없음 — skip" >&2; continue; }
-      echo "▶ skill push: $name → $REMOTE:$REMOTE_SKILLS_DIR/"
-      R=("${RSYNC[@]}")
-      [[ -n "$DELETE" ]] && R+=("$DELETE")
-      R+=("$src" "$REMOTE:$REMOTE_SKILLS_DIR/")
-      "${R[@]}"
-    done
-    ;;
   remote)
     [[ $# -ge 1 ]] || { echo "usage: $0 remote \"<command>\"" >&2; exit 1; }
     echo "▶ remote @ $REMOTE: $*"
@@ -127,11 +106,10 @@ case "$CMD" in
     exec $SSH_CMD "$REMOTE" "$*"
     ;;
   ""|-h|--help|help)
-    # 셔뱅 이후 연속된 주석 헤더만 출력 (코드 시작 줄 전까지; 줄번호 변동에 견고)
-    awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
+    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
-    echo "ERROR: 알 수 없는 명령 '$CMD'  (push | push-knowledge | push-data | pull | push-skill | remote)" >&2
+    echo "ERROR: 알 수 없는 명령 '$CMD'  (push | push-knowledge | push-data | pull | remote)" >&2
     exit 1
     ;;
 esac

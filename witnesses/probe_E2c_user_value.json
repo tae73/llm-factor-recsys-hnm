@@ -1,0 +1,276 @@
+{
+  "probe": "E2c_user_value",
+  "seed": 42,
+  "quick": false,
+  "n_cohort": 40000,
+  "user_reps": [
+    "reasoning_bge",
+    "reasoning_fields"
+  ],
+  "uses": [
+    "control",
+    "leadtime",
+    "merch",
+    "audience"
+  ],
+  "baseline": "11 demographic user features",
+  "audience_outcomes": [
+    "fut_price_tier",
+    "fut_top_group",
+    "fut_online",
+    "fut_repurchase"
+  ],
+  "control_outcomes": [
+    "fut_outfit_role",
+    "fut_trend_phase"
+  ],
+  "value_matrix": [
+    {
+      "axis": "reasoning_bge",
+      "use": "control",
+      "capability": "YES",
+      "capability_basis": "reasoning may predict the user's intended item-facet (steer target)",
+      "lift_metric": "incremental_macroF1 (demo+reasoning vs demo) on FUTURE outcome",
+      "metadata_baseline": "11 demographic user features (same train→future setup)",
+      "lift_value": null,
+      "best_outcome": null,
+      "per_outcome": {
+        "fut_outfit_role": {
+          "demo_f1": 0.1816,
+          "both_f1": 0.1819,
+          "reasoning_alone_f1": 0.1795,
+          "incremental_delta": 0.0003,
+          "p": 0.00947,
+          "significant": false,
+          "n": 40000
+        },
+        "fut_trend_phase": {
+          "demo_f1": 0.1323,
+          "both_f1": 0.1328,
+          "reasoning_alone_f1": 0.1301,
+          "incremental_delta": 0.0006,
+          "p": 0.05671,
+          "significant": false,
+          "n": 40000
+        }
+      },
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "STRONG",
+      "note": "best=None Δ=-1.0000; control prerequisite = predicting the steerable facet better than demo"
+    },
+    {
+      "axis": "reasoning_bge",
+      "use": "leadtime",
+      "capability": "PARTIAL",
+      "capability_basis": "",
+      "lift_metric": "n/a",
+      "metadata_baseline": "n/a",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-SEMANTICS",
+      "power": "n/a",
+      "note": "user rep has no item-momentum"
+    },
+    {
+      "axis": "reasoning_bge",
+      "use": "merch",
+      "capability": "PARTIAL",
+      "capability_basis": "",
+      "lift_metric": "n/a",
+      "metadata_baseline": "n/a",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-SEMANTICS",
+      "power": "n/a",
+      "note": "per-item outcome; user rep not the grouping var"
+    },
+    {
+      "axis": "reasoning_bge",
+      "use": "audience",
+      "capability": "YES",
+      "capability_basis": "user-reasoning is a richer profile than 11 demographics",
+      "lift_metric": "incremental_macroF1 (demo+reasoning vs demo) on FUTURE outcome",
+      "metadata_baseline": "11 demographic user features (same train→future setup)",
+      "lift_value": 0.0117,
+      "best_outcome": "fut_top_group",
+      "per_outcome": {
+        "fut_price_tier": {
+          "demo_f1": 0.202,
+          "both_f1": 0.2097,
+          "reasoning_alone_f1": 0.1245,
+          "incremental_delta": 0.0077,
+          "p": 4e-05,
+          "significant": false,
+          "n": 40000
+        },
+        "fut_top_group": {
+          "demo_f1": 0.045,
+          "both_f1": 0.0567,
+          "reasoning_alone_f1": 0.0507,
+          "incremental_delta": 0.0117,
+          "p": 6e-05,
+          "significant": true,
+          "n": 40000
+        },
+        "fut_online": {
+          "demo_f1": 0.7556,
+          "both_f1": 0.7552,
+          "reasoning_alone_f1": 0.5434,
+          "incremental_delta": -0.0004,
+          "p": 0.72861,
+          "significant": false,
+          "n": 40000
+        },
+        "fut_repurchase": {
+          "demo_f1": 0.5057,
+          "both_f1": 0.5077,
+          "reasoning_alone_f1": 0.4705,
+          "incremental_delta": 0.002,
+          "p": 0.14027,
+          "significant": false,
+          "n": 40000
+        }
+      },
+      "significant": true,
+      "lift_verdict": "PASS",
+      "power": "STRONG",
+      "note": "best=fut_top_group Δ=+0.0117; channel/repurchase=habit→demo wins; category/price=taste→reasoning may add",
+      "divergence": {
+        "div_rep": 0.0608,
+        "div_demo": 0.1724,
+        "ratio": 0.353,
+        "perm_p": 0.0,
+        "eff_k_rep": 3.97
+      }
+    },
+    {
+      "axis": "reasoning_fields",
+      "use": "control",
+      "capability": "YES",
+      "capability_basis": "reasoning may predict the user's intended item-facet (steer target)",
+      "lift_metric": "incremental_macroF1 (demo+reasoning vs demo) on FUTURE outcome",
+      "metadata_baseline": "11 demographic user features (same train→future setup)",
+      "lift_value": null,
+      "best_outcome": null,
+      "per_outcome": {
+        "fut_outfit_role": {
+          "demo_f1": 0.1816,
+          "both_f1": 0.1816,
+          "reasoning_alone_f1": 0.1795,
+          "incremental_delta": -0.0001,
+          "p": 0.648,
+          "significant": false,
+          "n": 40000
+        },
+        "fut_trend_phase": {
+          "demo_f1": 0.1323,
+          "both_f1": 0.1324,
+          "reasoning_alone_f1": 0.1301,
+          "incremental_delta": 0.0001,
+          "p": 0.39872,
+          "significant": false,
+          "n": 40000
+        }
+      },
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "STRONG",
+      "note": "best=None Δ=-1.0000; control prerequisite = predicting the steerable facet better than demo"
+    },
+    {
+      "axis": "reasoning_fields",
+      "use": "leadtime",
+      "capability": "PARTIAL",
+      "capability_basis": "",
+      "lift_metric": "n/a",
+      "metadata_baseline": "n/a",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-SEMANTICS",
+      "power": "n/a",
+      "note": "user rep has no item-momentum"
+    },
+    {
+      "axis": "reasoning_fields",
+      "use": "merch",
+      "capability": "PARTIAL",
+      "capability_basis": "",
+      "lift_metric": "n/a",
+      "metadata_baseline": "n/a",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-SEMANTICS",
+      "power": "n/a",
+      "note": "per-item outcome; user rep not the grouping var"
+    },
+    {
+      "axis": "reasoning_fields",
+      "use": "audience",
+      "capability": "YES",
+      "capability_basis": "user-reasoning is a richer profile than 11 demographics",
+      "lift_metric": "incremental_macroF1 (demo+reasoning vs demo) on FUTURE outcome",
+      "metadata_baseline": "11 demographic user features (same train→future setup)",
+      "lift_value": 0.0145,
+      "best_outcome": "fut_top_group",
+      "per_outcome": {
+        "fut_price_tier": {
+          "demo_f1": 0.202,
+          "both_f1": 0.2084,
+          "reasoning_alone_f1": 0.1964,
+          "incremental_delta": 0.0064,
+          "p": 0.00096,
+          "significant": false,
+          "n": 40000
+        },
+        "fut_top_group": {
+          "demo_f1": 0.045,
+          "both_f1": 0.0596,
+          "reasoning_alone_f1": 0.0562,
+          "incremental_delta": 0.0145,
+          "p": 0.00024,
+          "significant": true,
+          "n": 40000
+        },
+        "fut_online": {
+          "demo_f1": 0.7556,
+          "both_f1": 0.756,
+          "reasoning_alone_f1": 0.7543,
+          "incremental_delta": 0.0004,
+          "p": 0.04595,
+          "significant": false,
+          "n": 40000
+        },
+        "fut_repurchase": {
+          "demo_f1": 0.5057,
+          "both_f1": 0.5134,
+          "reasoning_alone_f1": 0.5105,
+          "incremental_delta": 0.0076,
+          "p": 0.00044,
+          "significant": false,
+          "n": 40000
+        }
+      },
+      "significant": true,
+      "lift_verdict": "PASS",
+      "power": "STRONG",
+      "note": "best=fut_top_group Δ=+0.0145; channel/repurchase=habit→demo wins; category/price=taste→reasoning may add",
+      "divergence": {
+        "div_rep": 0.3402,
+        "div_demo": 0.1724,
+        "ratio": 1.973,
+        "perm_p": 0.0,
+        "eff_k_rep": 3.49
+      }
+    }
+  ],
+  "user_pass_cells": [
+    "reasoning_bge→audience",
+    "reasoning_fields→audience"
+  ],
+  "decision": "E2c KAR-SYMMETRY CONFIRMED — user-reasoning ADDS future-predictive value over demographics at ['reasoning_bge→audience', 'reasoning_fields→audience'] (USER cells item-enrichment couldn't reach). Item→②③, user→①④."
+}

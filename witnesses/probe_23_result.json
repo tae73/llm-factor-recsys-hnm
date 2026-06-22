@@ -1,0 +1,362 @@
+{
+  "probe": "probe_23_serendipity",
+  "seed": 42,
+  "n_eval_users": 25000,
+  "n_items": 105494,
+  "n_boot": 1000,
+  "gt": "immediate_ground_truth (next-week NEW items, discovery-native)",
+  "tail_head_items": 19963,
+  "tail_fraction": 0.8108,
+  "tau_surprise": 0.9391,
+  "thresholds": {
+    "seren_rel_gain_min": 0.1,
+    "hr_guard": -0.02,
+    "tail_txn_share": 0.8
+  },
+  "baseline": "L1",
+  "variant_summary": {
+    "L1": {
+      "hr_at_12": 0.01292,
+      "ndcg_at_12": 0.0049021785171615385,
+      "diversity_at_12": 0.07133864599931519,
+      "coverage_at_12": 0.21888448632149696,
+      "novelty_at_12": 16.934464910910975,
+      "tail_exposure_at_12": 0.42024333333333336,
+      "hits_per_user": 0.01444,
+      "tail_hits_per_user": 0.0026,
+      "seren_hits_per_user": 0.00232,
+      "seren_hits_sym_per_user": 0.00432,
+      "frac_hits_tail": 0.1801,
+      "frac_hits_seren": 0.1607,
+      "hit_characterization": {
+        "n_hits": 361,
+        "frac_emerging_rising": 0.8476,
+        "frac_anchor_versatile": 0.8975
+      }
+    },
+    "META": {
+      "hr_at_12": 0.00532,
+      "ndcg_at_12": 0.0013693301208055064,
+      "diversity_at_12": 0.09146392080850899,
+      "coverage_at_12": 0.2731434963125865,
+      "novelty_at_12": 17.617246106097983,
+      "tail_exposure_at_12": 0.5071700000000001,
+      "hits_per_user": 0.00548,
+      "tail_hits_per_user": 0.00128,
+      "seren_hits_per_user": 0.00176,
+      "seren_hits_sym_per_user": 0.00136,
+      "frac_hits_tail": 0.2336,
+      "frac_hits_seren": 0.3212,
+      "hit_characterization": {
+        "n_hits": 137,
+        "frac_emerging_rising": 0.8102,
+        "frac_anchor_versatile": 0.8321
+      }
+    },
+    "L2": {
+      "hr_at_12": 0.00896,
+      "ndcg_at_12": 0.0032825096487711044,
+      "diversity_at_12": 0.09027913645819761,
+      "coverage_at_12": 0.21875177735226647,
+      "novelty_at_12": 17.378598229693104,
+      "tail_exposure_at_12": 0.5032066666666667,
+      "hits_per_user": 0.00968,
+      "tail_hits_per_user": 0.00188,
+      "seren_hits_per_user": 0.0018,
+      "seren_hits_sym_per_user": 0.00184,
+      "frac_hits_tail": 0.1942,
+      "frac_hits_seren": 0.186,
+      "hit_characterization": {
+        "n_hits": 242,
+        "frac_emerging_rising": 0.843,
+        "frac_anchor_versatile": 0.8678
+      }
+    },
+    "L3": {
+      "hr_at_12": 0.00592,
+      "ndcg_at_12": 0.0019332946523816842,
+      "diversity_at_12": 0.08747862644691952,
+      "coverage_at_12": 0.23296111627201546,
+      "novelty_at_12": 17.78872555816125,
+      "tail_exposure_at_12": 0.55351,
+      "hits_per_user": 0.00628,
+      "tail_hits_per_user": 0.0014,
+      "seren_hits_per_user": 0.00116,
+      "seren_hits_sym_per_user": 0.00112,
+      "frac_hits_tail": 0.2229,
+      "frac_hits_seren": 0.1847,
+      "hit_characterization": {
+        "n_hits": 157,
+        "frac_emerging_rising": 0.8471,
+        "frac_anchor_versatile": 0.8599
+      }
+    },
+    "L1+L2+L3": {
+      "hr_at_12": 0.0128,
+      "ndcg_at_12": 0.004961309933239012,
+      "diversity_at_12": 0.06423735228495789,
+      "coverage_at_12": 0.21272299846436765,
+      "novelty_at_12": 17.49850616273719,
+      "tail_exposure_at_12": 0.5123866666666667,
+      "hits_per_user": 0.01436,
+      "tail_hits_per_user": 0.00232,
+      "seren_hits_per_user": 0.00092,
+      "seren_hits_sym_per_user": 0.00424,
+      "frac_hits_tail": 0.1616,
+      "frac_hits_seren": 0.0641,
+      "hit_characterization": {
+        "n_hits": 359,
+        "frac_emerging_rising": 0.8524,
+        "frac_anchor_versatile": 0.9136
+      }
+    },
+    "EXT_prose": {
+      "hr_at_12": 0.00904,
+      "ndcg_at_12": 0.003189293096726372,
+      "diversity_at_12": 0.10831437914218754,
+      "coverage_at_12": 0.2219747094621495,
+      "novelty_at_12": 17.56764859414249,
+      "tail_exposure_at_12": 0.5169133333333333,
+      "hits_per_user": 0.01032,
+      "tail_hits_per_user": 0.00212,
+      "seren_hits_per_user": 0.00216,
+      "seren_hits_sym_per_user": 0.0024,
+      "frac_hits_tail": 0.2054,
+      "frac_hits_seren": 0.2093,
+      "hit_characterization": {
+        "n_hits": 258,
+        "frac_emerging_rising": 0.8372,
+        "frac_anchor_versatile": 0.8915
+      }
+    },
+    "EXT_struct": {
+      "hr_at_12": 0.00648,
+      "ndcg_at_12": 0.0024439680795340915,
+      "diversity_at_12": 0.13005297379285097,
+      "coverage_at_12": 0.2261266043566459,
+      "novelty_at_12": 18.417786594168263,
+      "tail_exposure_at_12": 0.6887933333333333,
+      "hits_per_user": 0.00792,
+      "tail_hits_per_user": 0.00128,
+      "seren_hits_per_user": 0.00132,
+      "seren_hits_sym_per_user": 0.00156,
+      "frac_hits_tail": 0.1616,
+      "frac_hits_seren": 0.1667,
+      "hit_characterization": {
+        "n_hits": 198,
+        "frac_emerging_rising": 0.8434,
+        "frac_anchor_versatile": 0.9394
+      }
+    }
+  },
+  "placebo_random12": {
+    "novelty_at_12": 19.310763968952177,
+    "tail_exposure_at_12": 0.8104266666666665,
+    "tail_hits_per_user": 8e-05,
+    "seren_hits_per_user": 0.00032
+  },
+  "falsification": [
+    {
+      "variant": "L2",
+      "s1_tailhit": {
+        "mean_a": 0.0026,
+        "mean_b": 0.00188,
+        "delta": -0.00072,
+        "rel_gain": -0.27692307692307694,
+        "ci_lo": -0.0014,
+        "ci_hi": -7.900000000000092e-05,
+        "n": 25000
+      },
+      "s2_serendipity_frozen_tau": {
+        "mean_a": 0.00232,
+        "mean_b": 0.0018,
+        "delta": -0.00052,
+        "rel_gain": -0.22413793103448273,
+        "ci_lo": -0.00128,
+        "ci_hi": 0.0002009999999999991,
+        "n": 25000
+      },
+      "s2b_serendipity_symmetric": {
+        "mean_a": 0.00432,
+        "mean_b": 0.00184,
+        "delta": -0.00248,
+        "rel_gain": -0.5740740740740741,
+        "ci_lo": -0.00336,
+        "ci_hi": -0.00152,
+        "n": 25000
+      },
+      "hr_rel_change": -0.3065,
+      "hr_guard_ok": false,
+      "go": false,
+      "verdict": "NO"
+    },
+    {
+      "variant": "L3",
+      "s1_tailhit": {
+        "mean_a": 0.0026,
+        "mean_b": 0.0014,
+        "delta": -0.0012,
+        "rel_gain": -0.4615384615384615,
+        "ci_lo": -0.00184,
+        "ci_hi": -0.000639000000000001,
+        "n": 25000
+      },
+      "s2_serendipity_frozen_tau": {
+        "mean_a": 0.00232,
+        "mean_b": 0.00116,
+        "delta": -0.00116,
+        "rel_gain": -0.5,
+        "ci_lo": -0.00188,
+        "ci_hi": -0.0004390000000000009,
+        "n": 25000
+      },
+      "s2b_serendipity_symmetric": {
+        "mean_a": 0.00432,
+        "mean_b": 0.00112,
+        "delta": -0.0032,
+        "rel_gain": -0.7407407407407408,
+        "ci_lo": -0.00408,
+        "ci_hi": -0.002278000000000002,
+        "n": 25000
+      },
+      "hr_rel_change": -0.5418,
+      "hr_guard_ok": false,
+      "go": false,
+      "verdict": "NO"
+    },
+    {
+      "variant": "L1+L2+L3",
+      "s1_tailhit": {
+        "mean_a": 0.0026,
+        "mean_b": 0.00232,
+        "delta": -0.00028,
+        "rel_gain": -0.10769230769230768,
+        "ci_lo": -0.0008,
+        "ci_hi": 0.00024,
+        "n": 25000
+      },
+      "s2_serendipity_frozen_tau": {
+        "mean_a": 0.00232,
+        "mean_b": 0.00092,
+        "delta": -0.0014,
+        "rel_gain": -0.603448275862069,
+        "ci_lo": -0.0020410000000000003,
+        "ci_hi": -0.00076,
+        "n": 25000
+      },
+      "s2b_serendipity_symmetric": {
+        "mean_a": 0.00432,
+        "mean_b": 0.00424,
+        "delta": -8e-05,
+        "rel_gain": -0.01851851851851852,
+        "ci_lo": -0.00104,
+        "ci_hi": 0.001,
+        "n": 25000
+      },
+      "hr_rel_change": -0.0093,
+      "hr_guard_ok": true,
+      "go": false,
+      "verdict": "NO"
+    },
+    {
+      "variant": "EXT_prose",
+      "s1_tailhit": {
+        "mean_a": 0.0026,
+        "mean_b": 0.00212,
+        "delta": -0.00048,
+        "rel_gain": -0.18461538461538463,
+        "ci_lo": -0.00108,
+        "ci_hi": 0.00012,
+        "n": 25000
+      },
+      "s2_serendipity_frozen_tau": {
+        "mean_a": 0.00232,
+        "mean_b": 0.00216,
+        "delta": -0.00016,
+        "rel_gain": -0.06896551724137931,
+        "ci_lo": -0.001,
+        "ci_hi": 0.0006409999999999991,
+        "n": 25000
+      },
+      "s2b_serendipity_symmetric": {
+        "mean_a": 0.00432,
+        "mean_b": 0.0024,
+        "delta": -0.00192,
+        "rel_gain": -0.4444444444444445,
+        "ci_lo": -0.00284,
+        "ci_hi": -0.00084,
+        "n": 25000
+      },
+      "hr_rel_change": -0.3003,
+      "hr_guard_ok": false,
+      "go": false,
+      "verdict": "NO"
+    },
+    {
+      "variant": "EXT_struct",
+      "s1_tailhit": {
+        "mean_a": 0.0026,
+        "mean_b": 0.00128,
+        "delta": -0.00132,
+        "rel_gain": -0.5076923076923077,
+        "ci_lo": -0.001841,
+        "ci_hi": -0.00084,
+        "n": 25000
+      },
+      "s2_serendipity_frozen_tau": {
+        "mean_a": 0.00232,
+        "mean_b": 0.00132,
+        "delta": -0.001,
+        "rel_gain": -0.4310344827586207,
+        "ci_lo": -0.00176,
+        "ci_hi": -0.00016,
+        "n": 25000
+      },
+      "s2b_serendipity_symmetric": {
+        "mean_a": 0.00432,
+        "mean_b": 0.00156,
+        "delta": -0.00276,
+        "rel_gain": -0.6388888888888888,
+        "ci_lo": -0.00364,
+        "ci_hi": -0.00184,
+        "n": 25000
+      },
+      "hr_rel_change": -0.4985,
+      "hr_guard_ok": false,
+      "go": false,
+      "verdict": "NO"
+    }
+  ],
+  "cold_start_brackets": {
+    "2-4": {
+      "n": 1415,
+      "L1": {
+        "tail_hit_count": 21,
+        "seren_hit_count": 5,
+        "seren_sym_count": 16
+      },
+      "L1+L2+L3": {
+        "tail_hit_count": 18,
+        "seren_hit_count": 0,
+        "seren_sym_count": 10
+      },
+      "note": "tiny hit counts — read as 'no rescue / tie', not large percentages"
+    },
+    "5-9": {
+      "n": 2294,
+      "L1": {
+        "tail_hit_count": 10,
+        "seren_hit_count": 7,
+        "seren_sym_count": 17
+      },
+      "L1+L2+L3": {
+        "tail_hit_count": 8,
+        "seren_hit_count": 9,
+        "seren_sym_count": 18
+      },
+      "note": "tiny hit counts — read as 'no rescue / tie', not large percentages"
+    }
+  },
+  "context_note": "accuracy (HR/NDCG) and diversity/coverage are CLOSED-NEGATIVE (probe_21/22, probe_02) — reported here only as guardrail/context, NOT re-claimed as new findings. novelty/exposure are descriptive list properties (cheap to inflate); headline = relevance-grounded S1/S2.",
+  "decision": "R-10 CLEAN NEGATIVE (tie at best, never a win) — NO enrichment variant IMPROVES relevant-surprise over L1 on any operationalization (S1 long-tail-hit, S2 frozen-τ serendipity, OR S2b labeling-symmetric serendipity). The frozen-τ S2 gap is ~94% a labeling artifact (enrichment recs sit closer to the user centroid → fewer cross L1's τ); under the FAIR symmetric S2b, L1+L2+L3 merely TIES L1 (CI includes 0). Enrichment DOES shift the list into the long tail (novelty/exposure↑) but those items are not the ones users buy. The last open recsys dimension is closed: enrichment value is merchant-side / interpretive, NOT consumer-recommendation lift — on any axis (accuracy/diversity/coverage/serendipity)."
+}

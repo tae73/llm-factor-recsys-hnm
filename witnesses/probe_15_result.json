@@ -1,0 +1,69 @@
+{
+  "probe": "probe_15_controllability",
+  "n_eval": 6000,
+  "new_control_axes_over_metadata": [
+    "l2_occasion",
+    "l2_style_mood",
+    "l2_season_fit",
+    "l2_perceived_quality",
+    "l2_trendiness",
+    "l2_versatility",
+    "l3_coordination_role",
+    "l3_visual_weight"
+  ],
+  "metadata_axes": [
+    "product_type_name",
+    "colour_group_name",
+    "section_name",
+    "garment_group_name",
+    "index_name"
+  ],
+  "per_target": {
+    "l2_occasion=Party": {
+      "steer_precision": 1.0,
+      "unsteered_rate": 0.016958333333333332,
+      "control_gain": 0.9830416666666667,
+      "steered_personalization": 0.8864792509873708,
+      "random_t_personalization": 0.8530559838612874
+    },
+    "l2_occasion=Work": {
+      "steer_precision": 1.0,
+      "unsteered_rate": 0.09469444444444444,
+      "control_gain": 0.9053055555555556,
+      "steered_personalization": 0.9001581828395525,
+      "random_t_personalization": 0.8609415441453457
+    },
+    "l2_occasion=Formal": {
+      "steer_precision": 1.0,
+      "unsteered_rate": 0.025569444444444443,
+      "control_gain": 0.9744305555555556,
+      "steered_personalization": 0.8888804529408614,
+      "random_t_personalization": 0.8579521487851938
+    },
+    "l2_season_fit=Summer": {
+      "steer_precision": 1.0,
+      "unsteered_rate": 0.13304166666666667,
+      "control_gain": 0.8669583333333333,
+      "steered_personalization": 0.9040615866780282,
+      "random_t_personalization": 0.8431546733478705
+    },
+    "l2_style_mood=Sporty": {
+      "steer_precision": 1.0,
+      "unsteered_rate": 0.0960277777777778,
+      "control_gain": 0.9039722222222222,
+      "steered_personalization": 0.89369167710344,
+      "random_t_personalization": 0.8428837231596311
+    },
+    "l2_style_mood=Minimalist": {
+      "steer_precision": 1.0,
+      "unsteered_rate": 0.4821388888888889,
+      "control_gain": 0.5178611111111111,
+      "steered_personalization": 0.9237689520517985,
+      "random_t_personalization": 0.8602730472087861
+    }
+  },
+  "mean_steer_precision": 1.0,
+  "mean_unsteered_rate": 0.1414050925925926,
+  "personalization_retained_frac": 1.0,
+  "verdict": "GO — L2/L3 enable controllable recommendation: steered precision 1.00 vs unsteered 0.14 (control gain +0.86), personalization retained (100% of targets). 8 new control axes absent from metadata."
+}

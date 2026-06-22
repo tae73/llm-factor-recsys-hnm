@@ -38,6 +38,7 @@ def main(
     embeddings_dir: Path = typer.Option("data/embeddings", help="Embeddings output directory"),
     bge_model: str = typer.Option("BAAI/bge-base-en-v1.5", help="BGE model name"),
     bge_batch_size: int = typer.Option(256, help="BGE encoding batch size"),
+    bge_device: str = typer.Option("mps", help="BGE device: mps | cpu | cuda | cuda:1"),
     customer_method: str = typer.Option("kmeans", help="Clustering method"),
     embeddings_only: bool = typer.Option(False, help="Only compute embeddings"),
     skip_embeddings: bool = typer.Option(False, help="Skip embedding computation"),
@@ -53,6 +54,7 @@ def main(
     emb_config = EmbeddingConfig(
         model_name=bge_model,
         batch_size=bge_batch_size,
+        device=bge_device,
     )
     seg_config = SegmentationConfig(
         customer_method=customer_method,

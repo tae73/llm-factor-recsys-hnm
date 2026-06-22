@@ -1,0 +1,36 @@
+{
+  "probe": "probe_19_format_unify",
+  "n_eligible": 12000,
+  "n_extracted": 3426,
+  "frozen_discovery_map": {
+    "L1_profile": {
+      "discovery_map": 0.0020664825636749714,
+      "discovery_hr": 0.019341528410556176
+    },
+    "ext_prose": {
+      "discovery_map": 0.0007768988627757606,
+      "discovery_hr": 0.011347030000859624
+    },
+    "ext_unified": {
+      "discovery_map": 0.000513592766082604,
+      "discovery_hr": 0.006103326742886616
+    }
+  },
+  "unified_vs_prose": {
+    "delta": -0.0002633060966931565,
+    "rel": -0.3389194003353247,
+    "ci": [
+      -0.0005555899121790029,
+      4.8652539892055366e-05
+    ]
+  },
+  "unified_vs_L1": {
+    "delta": -0.0015528897975923678,
+    "rel": -0.7514652312530306,
+    "ci": [
+      -0.0020142614641118356,
+      -0.0010617073980962962
+    ]
+  },
+  "verdict": "FORMAT NEUTRAL — unifying format does not beat prose; genre was not the (main) cause"
+}

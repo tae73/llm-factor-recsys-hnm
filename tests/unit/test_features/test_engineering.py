@@ -315,6 +315,53 @@ class TestGenerateTrainPairs:
         n_neg = int(np.sum(pairs["labels"] == 0))
         assert n_neg == n_pos * config.neg_sample_ratio
 
+    def test_popularity_negatives_oversample_popular_items(self, tmp_data_dir):
+        """Popularity strategy must over-sample popular items vs uniform.
+
+        A002 (3 train purchases) is the most popular article; uniform sampling
+        treats all 5 items equally, popularity sampling should pick A002 more.
+        """
+        con = duckdb.connect()
+        user_feats = compute_user_features(
+            con,
+            tmp_data_dir / "train_transactions.parquet",
+            tmp_data_dir / "articles.parquet",
+            tmp_data_dir / "customers.parquet",
+            FeatureConfig(),
+        )
+        item_feats = compute_item_features(
+            con,
+            tmp_data_dir / "train_transactions.parquet",
+            tmp_data_dir / "articles.parquet",
+            FeatureConfig(),
+        )
+        u2i, _, it2i, _ = build_id_maps(user_feats, item_feats)
+
+        # Many negatives per positive so the empirical distribution is stable.
+        uni_cfg = FeatureConfig(neg_sample_ratio=200, neg_strategy="uniform", random_seed=0)
+        pop_cfg = FeatureConfig(neg_sample_ratio=200, neg_strategy="popularity", random_seed=0)
+
+        uni = generate_train_pairs(
+            con, tmp_data_dir / "train_transactions.parquet", u2i, it2i, uni_cfg
+        )
+        pop = generate_train_pairs(
+            con, tmp_data_dir / "train_transactions.parquet", u2i, it2i, pop_cfg
+        )
+        con.close()
+
+        a002 = it2i["A002"]  # most popular item
+
+        def neg_frac(pairs, item):
+            mask = pairs["labels"] == 0
+            neg_items = pairs["item_idx"][mask]
+            return float(np.mean(neg_items == item))
+
+        uni_frac = neg_frac(uni, a002)
+        pop_frac = neg_frac(pop, a002)
+        assert pop_frac > uni_frac, (
+            f"popularity should over-sample A002: pop={pop_frac:.3f} uni={uni_frac:.3f}"
+        )
+
     def test_no_positive_in_negatives(self, tmp_data_dir, config):
         """Negative items should not overlap with user's positive items."""
         con = duckdb.connect()

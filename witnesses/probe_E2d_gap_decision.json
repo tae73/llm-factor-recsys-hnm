@@ -1,0 +1,307 @@
+{
+  "probe": "E2d_gap_decision",
+  "seed": 42,
+  "quick": false,
+  "thresholds": {
+    "pred_margin": 0.01,
+    "prec_margin": 0.05,
+    "lift_min": 1.1,
+    "mag_thresh": 2,
+    "min_val_primary": 5,
+    "min_val_robust": 20
+  },
+  "n_val_survivors": 2823,
+  "axes": [
+    "e2_value_gap",
+    "e2_trend_gap"
+  ],
+  "value_matrix": [
+    {
+      "axis": "e2_value_gap",
+      "use": "decision:markdown_risk",
+      "capability": "YES",
+      "capability_basis": "perception×behavior mismatch (e2_price_look vs e2_price_tier_actual) — non-redundant (E2-1)",
+      "lift_metric": "incremental macro-F1 ([constituents-onehot + gap] vs [constituents-onehot]) on FUTURE outcome",
+      "metadata_baseline": "one-hot(e2_price_look) + one-hot(e2_price_tier_actual) + one-hot(product_group)",
+      "lift_value": 0.0031,
+      "lift_ci": [
+        -0.0159,
+        0.004
+      ],
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "PRELIMINARY",
+      "n_primary": 2017,
+      "n_robust": 1522,
+      "incremental": {
+        "incr_delta_f1": 0.0031,
+        "incr_p": 0.2472,
+        "incr_significant": false,
+        "acc_incr": -0.0059,
+        "acc_ci": [
+          -0.0159,
+          0.004
+        ],
+        "f1_base": 0.3884,
+        "f1_full": 0.3916,
+        "f1_sat": 0.3887,
+        "sat_dominates": false,
+        "placebo_shuffle_delta": 0.0059,
+        "placebo_signrand_delta": -0.0017,
+        "robust_delta_f1": 0.0006,
+        "robust_n": 1522
+      },
+      "decision_rule": {
+        "n_flag": 428,
+        "base_rate": 0.3337,
+        "prec_gap": 0.243,
+        "prec_model": 0.493,
+        "dprec": -0.25,
+        "dprec_ci": [
+          -0.3087,
+          -0.1875
+        ],
+        "lift": 0.728,
+        "rule_verdict": "NO"
+      },
+      "note": "gap<0 (overpriced-look) → deeper future price drop | incrΔF1=+0.0031 p=0.2472 acc_incr=-0.0059[-0.0159, 0.004] | placebo shuffle=+0.0059 signrand=-0.0017 | sat=0.3887 | rule lift=0.728 dprec=-0.25",
+      "robustness": {
+        "ridge_r2_base": 0.0412,
+        "ridge_r2_full": 0.0373,
+        "ridge_dR2": -0.0039,
+        "corr_gap_raw": -0.0049,
+        "corr_gap_partial_on_constituent": -0.0462
+      }
+    },
+    {
+      "axis": "e2_value_gap",
+      "use": "decision:hidden_gem",
+      "capability": "YES",
+      "capability_basis": "perception×behavior mismatch (e2_price_look vs e2_price_tier_actual) — non-redundant (E2-1)",
+      "lift_metric": "incremental macro-F1 ([constituents-onehot + gap] vs [constituents-onehot]) on FUTURE outcome",
+      "metadata_baseline": "one-hot(e2_price_look) + one-hot(e2_price_tier_actual) + one-hot(product_group)",
+      "lift_value": -0.0081,
+      "lift_ci": [
+        -0.0178,
+        0.004
+      ],
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "PRELIMINARY",
+      "n_primary": 2017,
+      "n_robust": 1522,
+      "incremental": {
+        "incr_delta_f1": -0.0081,
+        "incr_p": 0.84669,
+        "incr_significant": false,
+        "acc_incr": -0.0074,
+        "acc_ci": [
+          -0.0178,
+          0.004
+        ],
+        "f1_base": 0.4083,
+        "f1_full": 0.4002,
+        "f1_sat": 0.3989,
+        "sat_dominates": false,
+        "placebo_shuffle_delta": -0.0036,
+        "placebo_signrand_delta": -0.0151,
+        "robust_delta_f1": -0.0081,
+        "robust_n": 1522
+      },
+      "decision_rule": {
+        "n_flag": 51,
+        "base_rate": 0.3332,
+        "prec_gap": 0.2549,
+        "prec_model": 0.451,
+        "dprec": -0.1961,
+        "dprec_ci": [
+          -0.3862,
+          -0.0098
+        ],
+        "lift": 0.765,
+        "rule_verdict": "NO"
+      },
+      "note": "gap>0 (hidden deal) → faster future sell-through | incrΔF1=-0.0081 p=0.84669 acc_incr=-0.0074[-0.0178, 0.004] | placebo shuffle=-0.0036 signrand=-0.0151 | sat=0.3989 | rule lift=0.765 dprec=-0.1961",
+      "robustness": {
+        "ridge_r2_base": 0.0082,
+        "ridge_r2_full": 0.0075,
+        "ridge_dR2": -0.0007,
+        "corr_gap_raw": -0.0082,
+        "corr_gap_partial_on_constituent": -0.0741
+      }
+    },
+    {
+      "axis": "e2_trend_gap",
+      "use": "decision:overhype_sleeper",
+      "capability": "YES",
+      "capability_basis": "perception×behavior mismatch (e2_trend_look vs e2_trend_phase_actual) — non-redundant (E2-1)",
+      "lift_metric": "incremental macro-F1 ([constituents-onehot + gap] vs [constituents-onehot]) on FUTURE outcome",
+      "metadata_baseline": "one-hot(e2_trend_look) + one-hot(e2_trend_phase_actual) + one-hot(product_group) + momentum",
+      "lift_value": 0.0087,
+      "lift_ci": [
+        -0.0005,
+        0.014
+      ],
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "PRELIMINARY",
+      "n_primary": 1999,
+      "n_robust": 1505,
+      "incremental": {
+        "incr_delta_f1": 0.0087,
+        "incr_p": 0.01896,
+        "incr_significant": false,
+        "acc_incr": 0.007,
+        "acc_ci": [
+          -0.0005,
+          0.014
+        ],
+        "f1_base": 0.4173,
+        "f1_full": 0.426,
+        "f1_sat": 0.4265,
+        "sat_dominates": true,
+        "placebo_shuffle_delta": 0.0048,
+        "placebo_signrand_delta": 0.0067,
+        "robust_delta_f1": -0.0022,
+        "robust_n": 1505
+      },
+      "decision_rule": {
+        "n_flag": 439,
+        "base_rate": 0.3337,
+        "prec_gap": 0.2825,
+        "prec_model": 0.4943,
+        "dprec": -0.2118,
+        "dprec_ci": [
+          -0.2639,
+          -0.1563
+        ],
+        "lift": 0.847,
+        "rule_verdict": "NO"
+      },
+      "note": "gap>0 (overhype) → future momentum decay; gap<0 (sleeper) → accelerate | incrΔF1=+0.0087 p=0.01896 acc_incr=+0.0070[-0.0005, 0.014] | placebo shuffle=+0.0048 signrand=0.0067 | sat=0.4265 | rule lift=0.847 dprec=-0.2118",
+      "robustness": {
+        "ridge_r2_base": 0.0977,
+        "ridge_r2_full": 0.0959,
+        "ridge_dR2": -0.0019,
+        "corr_gap_raw": 0.1066,
+        "corr_gap_partial_on_constituent": -0.0146
+      }
+    },
+    {
+      "axis": "e2_value_gap",
+      "use": "decision:survival",
+      "capability": "YES",
+      "capability_basis": "perception×behavior mismatch (e2_price_look vs e2_price_tier_actual) — non-redundant (E2-1)",
+      "lift_metric": "incremental macro-F1 ([constituents-onehot + gap] vs [constituents-onehot]) on FUTURE outcome",
+      "metadata_baseline": "one-hot(e2_price_look) + one-hot(e2_price_tier_actual) + one-hot(product_group)",
+      "lift_value": 0.0035,
+      "lift_ci": [
+        0.0012,
+        0.0182
+      ],
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "PRELIMINARY",
+      "n_primary": 5064,
+      "n_robust": 1141,
+      "incremental": {
+        "incr_delta_f1": 0.0035,
+        "incr_p": 0.36216,
+        "incr_significant": false,
+        "acc_incr": 0.0097,
+        "acc_ci": [
+          0.0012,
+          0.0182
+        ],
+        "f1_base": 0.5127,
+        "f1_full": 0.5162,
+        "f1_sat": 0.5062,
+        "sat_dominates": false,
+        "placebo_shuffle_delta": 0.0081,
+        "placebo_signrand_delta": null
+      },
+      "decision_rule": {
+        "n_flag": 1141,
+        "base_rate": 0.5575,
+        "prec_gap": 0.5758,
+        "prec_model": 0.674,
+        "dprec": -0.0982,
+        "dprec_ci": [
+          -0.1299,
+          -0.0645
+        ],
+        "lift": 1.033,
+        "rule_verdict": "NO",
+        "flag_basis": "|gap|>=2 (extreme mismatch, either sign)"
+      },
+      "note": "extreme |gap| → survives into val | incrΔF1=+0.0035 p=0.36216 acc_incr=+0.0097[0.0012, 0.0182] | placebo shuffle=+0.0081 signrand=None | sat=0.5062 | rule lift=1.033 dprec=-0.0982"
+    },
+    {
+      "axis": "e2_trend_gap",
+      "use": "decision:survival",
+      "capability": "YES",
+      "capability_basis": "perception×behavior mismatch (e2_trend_look vs e2_trend_phase_actual) — non-redundant (E2-1)",
+      "lift_metric": "incremental macro-F1 ([constituents-onehot + gap] vs [constituents-onehot]) on FUTURE outcome",
+      "metadata_baseline": "one-hot(e2_trend_look) + one-hot(e2_trend_phase_actual) + one-hot(product_group) + momentum",
+      "lift_value": 0.006,
+      "lift_ci": [
+        -0.0018,
+        0.0133
+      ],
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "PRELIMINARY",
+      "n_primary": 4895,
+      "n_robust": 2388,
+      "incremental": {
+        "incr_delta_f1": 0.006,
+        "incr_p": 0.00069,
+        "incr_significant": false,
+        "acc_incr": 0.0061,
+        "acc_ci": [
+          -0.0018,
+          0.0133
+        ],
+        "f1_base": 0.6478,
+        "f1_full": 0.6539,
+        "f1_sat": 0.6551,
+        "sat_dominates": true,
+        "placebo_shuffle_delta": -0.0005,
+        "placebo_signrand_delta": null
+      },
+      "decision_rule": {
+        "n_flag": 2388,
+        "base_rate": 0.5722,
+        "prec_gap": 0.508,
+        "prec_model": 0.724,
+        "dprec": -0.2161,
+        "dprec_ci": [
+          -0.2336,
+          -0.1963
+        ],
+        "lift": 0.888,
+        "rule_verdict": "NO",
+        "flag_basis": "|gap|>=2 (extreme mismatch, either sign)"
+      },
+      "note": "extreme |gap| → survives into val | incrΔF1=+0.0060 p=0.00069 acc_incr=+0.0061[-0.0018, 0.0133] | placebo shuffle=-0.0005 signrand=None | sat=0.6551 | rule lift=0.888 dprec=-0.2161"
+    }
+  ],
+  "summary": {
+    "n_cells": 5,
+    "prelim_candidates": [],
+    "by_verdict": {
+      "PRELIM": [],
+      "MARGINAL": [
+        "e2_value_gap→decision:markdown_risk",
+        "e2_trend_gap→decision:overhype_sleeper",
+        "e2_value_gap→decision:survival",
+        "e2_trend_gap→decision:survival"
+      ],
+      "NO": [
+        "e2_value_gap→decision:hidden_gem"
+      ],
+      "PRELIMINARY-INSUFFICIENT": []
+    }
+  },
+  "decision": "E2d CLEAN NEGATIVE — neither gap axis carries incremental FUTURE decision-lift over its own constituents (one-hot levels) on markdown/sell-through/momentum/survival, under 5 pre-registered gates. The mismatch is a non-redundant INTERPRETIVE coordinate, not a forecasting one — sharpens the E2 thesis (value = decision-axis, not prediction)."
+}

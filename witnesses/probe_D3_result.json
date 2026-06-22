@@ -1,0 +1,132 @@
+{
+  "probe": "probe_D3_steering_cost",
+  "setup": {
+    "split": "immediate",
+    "pool": 5000,
+    "recent_since": "2020-05-01",
+    "k": 12,
+    "min_hist": 3,
+    "primary_attr": "l2_occasion",
+    "second_attr": "l2_season_fit",
+    "compose_alpha": 0.5,
+    "n_eligible_users": 10000,
+    "coverage_frac": 0.1167569587147394
+  },
+  "baseline_discovery_map": 0.002528661305515472,
+  "alphas": [
+    0.0,
+    0.05,
+    0.1,
+    0.2,
+    0.5,
+    1.0
+  ],
+  "single_attribute": [
+    {
+      "alpha": 0.0,
+      "precision_ctx": 0.7279333333333333,
+      "precision_off": 0.03419166666666666,
+      "discovery_map_context": 0.002528661305515472,
+      "discovery_map_offtarget": 0.002528661305515472
+    },
+    {
+      "alpha": 0.05,
+      "precision_ctx": 0.9741416666666668,
+      "precision_off": 0.687575,
+      "discovery_map_context": 0.0035351543009459674,
+      "discovery_map_offtarget": 0.0008297753026294693
+    },
+    {
+      "alpha": 0.1,
+      "precision_ctx": 0.998375,
+      "precision_off": 0.7920916666666666,
+      "discovery_map_context": 0.0036008145342312004,
+      "discovery_map_offtarget": 0.0003984111552028219
+    },
+    {
+      "alpha": 0.2,
+      "precision_ctx": 1.0,
+      "precision_off": 0.8016999999999999,
+      "discovery_map_context": 0.0035969699575116236,
+      "discovery_map_offtarget": 0.0003016681297097964
+    },
+    {
+      "alpha": 0.5,
+      "precision_ctx": 1.0,
+      "precision_off": 0.8017583333333334,
+      "discovery_map_context": 0.0035969699575116236,
+      "discovery_map_offtarget": 0.00029055701859868524
+    },
+    {
+      "alpha": 1.0,
+      "precision_ctx": 1.0,
+      "precision_off": 0.8017583333333334,
+      "discovery_map_context": 0.0035969699575116236,
+      "discovery_map_offtarget": 0.00029055701859868524
+    }
+  ],
+  "two_attribute": [
+    {
+      "alpha": 0.0,
+      "joint_precision_ctx": 0.3541916666666666,
+      "joint_precision_off": 0.005033333333333333,
+      "discovery_map_context": 0.002528661305515472,
+      "discovery_map_offtarget": 0.002528661305515472
+    },
+    {
+      "alpha": 0.05,
+      "joint_precision_ctx": 0.9818583333333332,
+      "joint_precision_off": 0.2798916666666667,
+      "discovery_map_context": 0.007224493354879448,
+      "discovery_map_offtarget": 0.00024544963524130185
+    },
+    {
+      "alpha": 0.1,
+      "joint_precision_ctx": 0.999,
+      "joint_precision_off": 0.33215,
+      "discovery_map_context": 0.007282232953244045,
+      "discovery_map_offtarget": 7.238840788840789e-05
+    },
+    {
+      "alpha": 0.2,
+      "joint_precision_ctx": 0.9998916666666667,
+      "joint_precision_off": 0.3378333333333333,
+      "discovery_map_context": 0.007333251471762565,
+      "discovery_map_offtarget": 1.9129356333901787e-05
+    },
+    {
+      "alpha": 0.5,
+      "joint_precision_ctx": 0.9998916666666667,
+      "joint_precision_off": 0.337875,
+      "discovery_map_context": 0.007333251471762565,
+      "discovery_map_offtarget": 1.9129356333901787e-05
+    },
+    {
+      "alpha": 1.0,
+      "joint_precision_ctx": 0.9998916666666667,
+      "joint_precision_off": 0.337875,
+      "discovery_map_context": 0.007333251471762565,
+      "discovery_map_offtarget": 1.9129356333901787e-05
+    }
+  ],
+  "two_attribute_fixed_alpha": {
+    "alpha": 0.5,
+    "joint_precision_ctx": 0.9998916666666667,
+    "joint_precision_off": 0.337875,
+    "discovery_map_context": 0.007333251471762565,
+    "discovery_map_offtarget": 1.9129356333901787e-05
+  },
+  "accuracy_cost_summary": {
+    "offtarget_precision_ge_0.8_at_alpha": 0.2,
+    "offtarget_dmap_at_that_alpha": 0.0003016681297097964,
+    "offtarget_cost_abs": 0.0022269931758056756,
+    "offtarget_cost_rel": 0.8807004603377276,
+    "context_best_dmap": 0.0036008145342312004,
+    "context_best_rel_gain": 0.42400033028431544,
+    "context_2attr_best_dmap": 0.007333251471762565,
+    "context_2attr_best_rel_gain": 1.9000528681984432,
+    "context_helps": true,
+    "context_hurts": false
+  },
+  "verdict": "D3 CONDITIONAL — off-target precision >=0.8 reachable at alpha=0.2 but at 88% relative discovery_map cost (>30%): control is real but EXPENSIVE; context-aware best dmap 0.00360 vs baseline 0.00253."
+}

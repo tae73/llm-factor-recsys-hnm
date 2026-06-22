@@ -1,0 +1,213 @@
+{
+  "probe": "D5_value_matrix",
+  "seed": 42,
+  "n_items": 105494,
+  "verdict": "D5 PARTIAL \u2014 honest: enrichment adds STRUCTURE (segmentation) and COVERAGE (faceted-search axes) but NOT predictive lift over metadata.",
+  "predictive_go": false,
+  "structure_coverage_go": true,
+  "value_matrix": [
+    {
+      "task": "STRUCTURE/SEGMENTATION (BGE-text, eff_k)",
+      "stakeholder": "Analytics",
+      "metric": "effective_k @ k=10",
+      "metadata_score": 9.31,
+      "l2l3_score": 8.341,
+      "both_score": 4.599,
+      "increment": -0.969,
+      "significant": false
+    },
+    {
+      "task": "STRUCTURE/SEGMENTATION (BGE-text, silhouette)",
+      "stakeholder": "Analytics",
+      "metric": "silhouette @ k=10",
+      "metadata_score": 0.135,
+      "l2l3_score": 0.1,
+      "both_score": null,
+      "increment": -0.035,
+      "significant": false
+    },
+    {
+      "task": "BUSINESS-OUTCOME: popularity_quartile",
+      "stakeholder": "Marketing/Merch",
+      "metric": "5-fold CV macro-F1",
+      "metadata_score": 0.49,
+      "l2l3_score": 0.3839,
+      "both_score": 0.4915,
+      "increment": 0.0016,
+      "significant": false
+    },
+    {
+      "task": "BUSINESS-OUTCOME: repurchase_rate_tercile",
+      "stakeholder": "Marketing/Merch",
+      "metric": "5-fold CV macro-F1",
+      "metadata_score": 0.5576,
+      "l2l3_score": 0.4886,
+      "both_score": 0.5577,
+      "increment": 0.0001,
+      "significant": false
+    },
+    {
+      "task": "FACETED-SEARCH COVERAGE",
+      "stakeholder": "Engineering/Search",
+      "metric": "# semantic axes metadata lacks",
+      "metadata_score": 0,
+      "l2l3_score": 11,
+      "both_score": null,
+      "increment": 11,
+      "significant": true
+    }
+  ],
+  "cells": {
+    "segmentation": {
+      "metadata_onehot": {
+        "k": 10,
+        "eff_k": 5.918,
+        "silhouette": -0.0248
+      },
+      "l2l3_onehot": {
+        "k": 10,
+        "eff_k": 6.285,
+        "silhouette": 0.0348
+      },
+      "l2l3_bge": {
+        "k": 10,
+        "eff_k": 8.341,
+        "silhouette": 0.1
+      },
+      "both_onehot": {
+        "k": 10,
+        "eff_k": 4.599,
+        "silhouette": -0.0058
+      },
+      "metadata_bge": {
+        "k": 10,
+        "eff_k": 9.31,
+        "silhouette": 0.135
+      },
+      "increment": {
+        "eff_k_bge": -0.969,
+        "silhouette_bge": -0.035,
+        "eff_k_onehot": 0.367,
+        "onehot_collapse_verified": true
+      }
+    },
+    "business_outcomes": {
+      "popularity_quartile": {
+        "metadata": {
+          "macro_f1": 0.49,
+          "auc": 0.7577
+        },
+        "l2l3": {
+          "macro_f1": 0.3839,
+          "auc": 0.677
+        },
+        "both": {
+          "macro_f1": 0.4915,
+          "auc": 0.7597
+        },
+        "increment_l2l3_vs_meta": {
+          "mean_delta": -0.1061,
+          "p_value": 1.0,
+          "stat_significant": false,
+          "practically_significant": false,
+          "significant": false
+        },
+        "increment_both_vs_meta": {
+          "mean_delta": 0.0016,
+          "p_value": 0.03662,
+          "stat_significant": true,
+          "practically_significant": false,
+          "significant": false
+        }
+      },
+      "repurchase_rate_tercile": {
+        "metadata": {
+          "macro_f1": 0.5576,
+          "auc": 0.7261
+        },
+        "l2l3": {
+          "macro_f1": 0.4886,
+          "auc": 0.6652
+        },
+        "both": {
+          "macro_f1": 0.5577,
+          "auc": 0.7276
+        },
+        "increment_l2l3_vs_meta": {
+          "mean_delta": -0.069,
+          "p_value": 1.0,
+          "stat_significant": false,
+          "practically_significant": false,
+          "significant": false
+        },
+        "increment_both_vs_meta": {
+          "mean_delta": 0.0001,
+          "p_value": 0.31979,
+          "stat_significant": false,
+          "practically_significant": false,
+          "significant": false
+        }
+      }
+    },
+    "faceted_coverage": {
+      "n_semantic_axes_l2l3": 11,
+      "n_axes_metadata_lacks": 11,
+      "axes_metadata_lacks": [
+        "occasion (l2_occasion)",
+        "style_mood (l2_style_mood)",
+        "perceived_quality (l2_perceived_quality)",
+        "trendiness (l2_trendiness)",
+        "season_fit (l2_season_fit)",
+        "versatility (l2_versatility)",
+        "coordination_role (l3_coordination_role)",
+        "visual_weight (l3_visual_weight)",
+        "color_harmony (l3_color_harmony)",
+        "tone_season (l3_tone_season)",
+        "style_lineage (l3_style_lineage)"
+      ],
+      "example_distributions": {
+        "l2_occasion": {
+          "Everyday": 92464,
+          "Lounge": 35022,
+          "Outdoor": 18116,
+          "Work": 10711,
+          "Party": 8493,
+          "Formal": 7495,
+          "Active": 4442,
+          "Beach": 3238
+        },
+        "l2_style_mood": {
+          "Casual": 61041,
+          "Feminine": 44694,
+          "Minimalist": 20183,
+          "Cozy": 16653,
+          "Preppy": 13130,
+          "Sporty": 12916,
+          "Classic": 11310,
+          "Luxury": 7568
+        },
+        "l2_season_fit": {
+          "All-season": 58699,
+          "Fall": 21432,
+          "Spring": 12962,
+          "Summer": 9915,
+          "Winter": 2486
+        },
+        "l3_coordination_role": {
+          "Foundation": 70700,
+          "Basic": 20454,
+          "Statement": 5591,
+          "Accent": 3286,
+          "Finishing": 2897,
+          "Layering": 2566
+        }
+      },
+      "coverage_fact": "L2/L3 exposes 11 queryable semantic axes (occasion, mood, quality, trendiness, season-fit, versatility, coordination, visual-weight, color-harmony, tone-season, lineage) absent from the metadata catalog."
+    }
+  },
+  "feature_dims": {
+    "metadata_onehot": 317,
+    "l2l3_onehot": 126,
+    "bge_dim": 768
+  }
+}

@@ -1,0 +1,346 @@
+{
+  "probe": "E2_value_matrix",
+  "seed": 42,
+  "quick": false,
+  "n_users_faceted": 8000,
+  "n_matrix_items": 105542,
+  "thresholds": {
+    "eta_excess_min": 0.05,
+    "leadlag_delta_min": 0.1,
+    "steer_cost_modest": 0.3
+  },
+  "axes": [
+    "e2_trend_phase_actual",
+    "e2_outfit_role",
+    "e2_value_gap",
+    "e2_trend_gap"
+  ],
+  "uses": [
+    "faceted",
+    "leadlag",
+    "merch",
+    "audience"
+  ],
+  "value_matrix": [
+    {
+      "axis": "e2_trend_phase_actual",
+      "use": "faceted",
+      "capability": "YES",
+      "capability_basis": "steerable facet absent from metadata (DE1 nonredundant)",
+      "lift_metric": "context_steer_discovery_map_rel_gain (steerable @ off_cost_rel)",
+      "metadata_baseline": "unsteered/off-target discovery_map",
+      "lift_value": 0.9738,
+      "lift_ci": null,
+      "alpha_at_0.8": 0.05,
+      "off_cost_rel": 0.9161,
+      "precision_reachable": true,
+      "context_helps": true,
+      "context_best_dmap": 0.005163,
+      "baseline_dmap": 0.002616,
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "STRONG",
+      "note": "steer reachable@α=0.05 off_cost_rel=0.92; ctx_gain=+0.97 (ctx_helps=True)"
+    },
+    {
+      "axis": "e2_trend_phase_actual",
+      "use": "leadlag",
+      "capability": "YES",
+      "capability_basis": "sales-momentum dimension absent from metadata",
+      "lift_metric": "leadlag_corr_excess_vs_permutation_null",
+      "metadata_baseline": "permuted-label share lead-lag (r=0.0615)",
+      "lift_value": 0.4107,
+      "lift_ci": [
+        0.1941,
+        0.6395
+      ],
+      "best_lag": 3,
+      "r_attr": 0.4723,
+      "n_categories": 10,
+      "significant": true,
+      "lift_verdict": "PASS",
+      "power": "STRONG",
+      "note": "best_lag=3 r_attr=0.4723 vs null 0.0615; 10 cats"
+    },
+    {
+      "axis": "e2_trend_phase_actual",
+      "use": "merch",
+      "capability": "YES",
+      "capability_basis": "co-purchase/momentum role not in metadata (DE1 nonredundant)",
+      "lift_metric": "sellthrough_eta_excess_vs_metadata",
+      "metadata_baseline": "eta(section_name, log velocity)=0.564",
+      "lift_value": -0.1316,
+      "lift_ci": [
+        -0.149,
+        -0.1169
+      ],
+      "eta_attr": 0.4325,
+      "placebo_eta": 0.0022,
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "STRONG",
+      "note": "eta(attr)=0.433 vs meta 0.564; placebo 0.002 [axis derived from sales/co-purchase → coupling; excess is vs metadata, placebo≈0]"
+    },
+    {
+      "axis": "e2_trend_phase_actual",
+      "use": "audience",
+      "capability": "YES",
+      "capability_basis": "new non-redundant partition dimension",
+      "lift_metric": "segment_repurchase_divergence_vs_metadata",
+      "metadata_baseline": "metadata k-means (k=6) divergence=0.006",
+      "lift_value": 0.002,
+      "lift_ci": null,
+      "perm_p": 0.0,
+      "eff_k_axis": 3.855,
+      "eff_k_meta": 4.069,
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "STRONG",
+      "note": "div(axis)=0.008 vs meta 0.006; perm p=0.0"
+    },
+    {
+      "axis": "e2_outfit_role",
+      "use": "faceted",
+      "capability": "YES",
+      "capability_basis": "steerable facet absent from metadata (DE1 nonredundant)",
+      "lift_metric": "context_steer_discovery_map_rel_gain (steerable @ off_cost_rel)",
+      "metadata_baseline": "unsteered/off-target discovery_map",
+      "lift_value": 0.2426,
+      "lift_ci": null,
+      "alpha_at_0.8": 0.1,
+      "off_cost_rel": 0.9606,
+      "precision_reachable": true,
+      "context_helps": true,
+      "context_best_dmap": 0.00325,
+      "baseline_dmap": 0.002616,
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "STRONG",
+      "note": "steer reachable@α=0.1 off_cost_rel=0.96; ctx_gain=+0.24 (ctx_helps=True)"
+    },
+    {
+      "axis": "e2_outfit_role",
+      "use": "leadlag",
+      "capability": "PARTIAL",
+      "capability_basis": "",
+      "lift_metric": "n/a",
+      "metadata_baseline": "n/a",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-SEMANTICS",
+      "power": "n/a",
+      "note": "no momentum semantics (static role/gap)"
+    },
+    {
+      "axis": "e2_outfit_role",
+      "use": "merch",
+      "capability": "YES",
+      "capability_basis": "co-purchase/momentum role not in metadata (DE1 nonredundant)",
+      "lift_metric": "sellthrough_eta_excess_vs_metadata",
+      "metadata_baseline": "eta(section_name, log velocity)=0.564",
+      "lift_value": 0.0592,
+      "lift_ci": [
+        0.0462,
+        0.0689
+      ],
+      "eta_attr": 0.6233,
+      "placebo_eta": 0.0027,
+      "significant": true,
+      "lift_verdict": "PASS",
+      "power": "STRONG",
+      "note": "eta(attr)=0.623 vs meta 0.564; placebo 0.003 [axis derived from sales/co-purchase → coupling; excess is vs metadata, placebo≈0]"
+    },
+    {
+      "axis": "e2_outfit_role",
+      "use": "audience",
+      "capability": "YES",
+      "capability_basis": "new non-redundant partition dimension",
+      "lift_metric": "segment_repurchase_divergence_vs_metadata",
+      "metadata_baseline": "metadata k-means (k=5) divergence=0.0042",
+      "lift_value": 0.0041,
+      "lift_ci": null,
+      "perm_p": 0.0,
+      "eff_k_axis": 3.376,
+      "eff_k_meta": 2.076,
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "STRONG",
+      "note": "div(axis)=0.0083 vs meta 0.0042; perm p=0.0"
+    },
+    {
+      "axis": "e2_value_gap",
+      "use": "faceted",
+      "capability": "YES",
+      "capability_basis": "7 queryable gap buckets (-3..3)",
+      "lift_metric": "n/a (coverage fact)",
+      "metadata_baseline": "metadata exposes no such axis",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-COVERAGE",
+      "power": "PRELIMINARY",
+      "note": "facet exposes 7 buckets; pilot pool too thin for steering"
+    },
+    {
+      "axis": "e2_value_gap",
+      "use": "leadlag",
+      "capability": "PARTIAL",
+      "capability_basis": "",
+      "lift_metric": "n/a",
+      "metadata_baseline": "n/a",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-SEMANTICS",
+      "power": "n/a",
+      "note": "no momentum semantics (static role/gap)"
+    },
+    {
+      "axis": "e2_value_gap",
+      "use": "merch",
+      "capability": "YES",
+      "capability_basis": "co-purchase/momentum role not in metadata (DE1 nonredundant)",
+      "lift_metric": "sellthrough_eta_excess_vs_metadata",
+      "metadata_baseline": "eta(product_type_name, log velocity)=0.383",
+      "lift_value": -0.2305,
+      "lift_ci": [
+        -0.2703,
+        -0.1982
+      ],
+      "eta_attr": 0.1523,
+      "placebo_eta": 0.041,
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "PRELIMINARY",
+      "note": "eta(attr)=0.152 vs meta 0.383; placebo 0.041"
+    },
+    {
+      "axis": "e2_value_gap",
+      "use": "audience",
+      "capability": "YES",
+      "capability_basis": "new non-redundant partition dimension",
+      "lift_metric": "segment_repurchase_divergence_vs_metadata",
+      "metadata_baseline": "metadata k-means (k=7) divergence=0.0067",
+      "lift_value": -0.0009,
+      "lift_ci": null,
+      "perm_p": 0.0,
+      "eff_k_axis": 4.377,
+      "eff_k_meta": 2.039,
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "PRELIMINARY",
+      "note": "div(axis)=0.0058 vs meta 0.0067; perm p=0.0"
+    },
+    {
+      "axis": "e2_trend_gap",
+      "use": "faceted",
+      "capability": "YES",
+      "capability_basis": "8 queryable gap buckets (-4..3)",
+      "lift_metric": "n/a (coverage fact)",
+      "metadata_baseline": "metadata exposes no such axis",
+      "lift_value": null,
+      "lift_ci": null,
+      "significant": false,
+      "lift_verdict": "N/A-COVERAGE",
+      "power": "PRELIMINARY",
+      "note": "facet exposes 8 buckets; pilot pool too thin for steering"
+    },
+    {
+      "axis": "e2_trend_gap_sign",
+      "use": "leadlag",
+      "capability": "YES",
+      "capability_basis": "sales-momentum dimension absent from metadata",
+      "lift_metric": "leadlag_corr_excess_vs_permutation_null",
+      "metadata_baseline": "permuted-label share lead-lag (r=-0.089)",
+      "lift_value": 0.006,
+      "lift_ci": [
+        -0.3198,
+        0.294
+      ],
+      "best_lag": 1,
+      "r_attr": -0.083,
+      "n_categories": 9,
+      "significant": false,
+      "lift_verdict": "MARGINAL",
+      "power": "PRELIMINARY",
+      "note": "best_lag=1 r_attr=-0.083 vs null -0.089; 9 cats"
+    },
+    {
+      "axis": "e2_trend_gap",
+      "use": "merch",
+      "capability": "YES",
+      "capability_basis": "co-purchase/momentum role not in metadata (DE1 nonredundant)",
+      "lift_metric": "sellthrough_eta_excess_vs_metadata",
+      "metadata_baseline": "eta(product_type_name, log velocity)=0.39",
+      "lift_value": -0.0817,
+      "lift_ci": [
+        -0.122,
+        -0.0524
+      ],
+      "eta_attr": 0.3086,
+      "placebo_eta": 0.0309,
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "PRELIMINARY",
+      "note": "eta(attr)=0.309 vs meta 0.39; placebo 0.031"
+    },
+    {
+      "axis": "e2_trend_gap",
+      "use": "audience",
+      "capability": "YES",
+      "capability_basis": "new non-redundant partition dimension",
+      "lift_metric": "segment_repurchase_divergence_vs_metadata",
+      "metadata_baseline": "metadata k-means (k=8) divergence=0.0088",
+      "lift_value": -0.0072,
+      "lift_ci": null,
+      "perm_p": 0.012,
+      "eff_k_axis": 4.677,
+      "eff_k_meta": 2.836,
+      "significant": false,
+      "lift_verdict": "NO",
+      "power": "PRELIMINARY",
+      "note": "div(axis)=0.0016 vs meta 0.0088; perm p=0.012"
+    }
+  ],
+  "summary": {
+    "capability_yes": 14,
+    "n_cells": 16,
+    "strong_lift_pass": 2,
+    "strong_pass_cells": [
+      "e2_trend_phase_actual→leadlag",
+      "e2_outfit_role→merch"
+    ],
+    "by_verdict": {
+      "PASS": [
+        "e2_trend_phase_actual→leadlag",
+        "e2_outfit_role→merch"
+      ],
+      "MARGINAL": [
+        "e2_trend_phase_actual→faceted",
+        "e2_trend_phase_actual→audience",
+        "e2_outfit_role→faceted",
+        "e2_outfit_role→audience",
+        "e2_trend_gap_sign→leadlag"
+      ],
+      "NO": [
+        "e2_trend_phase_actual→merch",
+        "e2_value_gap→merch",
+        "e2_value_gap→audience",
+        "e2_trend_gap→merch",
+        "e2_trend_gap→audience"
+      ],
+      "PRELIM": [],
+      "N/A-COVERAGE": [
+        "e2_value_gap→faceted",
+        "e2_trend_gap→faceted"
+      ],
+      "N/A-SEMANTICS": [
+        "e2_outfit_role→leadlag",
+        "e2_value_gap→leadlag"
+      ],
+      "N/A-DATA": []
+    }
+  },
+  "decision": "E2 GO — axes are decision-axes with ≥2 behavioral lift wins"
+}
